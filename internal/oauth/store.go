@@ -3,6 +3,8 @@
 package oauth
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,7 +38,8 @@ type Store struct {
 	Client        *Client
 	CallbackPorts []int
 	DeviceID      string
-	path          string
+	dir           string // 与 path 同目录；多账号凭据 <account>.bin 都落这
+	path          string // 当前激活凭据文件（旧版兼容 = <dir>/oauth-credential.bin）
 	log           *slog.Logger
 	protect       func([]byte, string) ([]byte, error)
 	unprotect     func([]byte) ([]byte, error)
@@ -50,6 +54,22 @@ type Store struct {
 // 兜底窗口。
 const RefreshMarginS = 300
 
+// AccountInfo 多账号列表项（面板展示用；Account 已截断到 12 位）。
+type AccountInfo struct {
+	Account    string `json:"account"`
+	Active     bool   `json:"active"`
+	TokenExp   string `json:"token_exp"`
+	HasRefresh bool   `json:"has_refresh"`
+}
+
+// first12 面板展示统一截断，与启动横幅的口径一致。
+func first12(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
+}
+
 // NewStore 构造凭据仓库。device_id 与凭据同目录、同等级保护：它参与签名请求，
 // 且必须跨进程稳定。
 func NewStore(directory, authBase, version, platform, appID, appKey string,
@@ -62,6 +82,7 @@ func NewStore(directory, authBase, version, platform, appID, appKey string,
 		CallbackPorts: CallbackPorts,
 		Client:        NewClient(authBase, version, platform, appID, appKey, deviceID, extraHosts),
 		DeviceID:      deviceID,
+		dir:           directory,
 		path:          filepath.Join(directory, CredentialFile),
 		log:           logger,
 		protect:       winapi.CryptProtectData,
@@ -90,7 +111,8 @@ func (s *Store) unprotectPayload(blob []byte) ([]byte, error) {
 	return s.unprotect(blob)
 }
 
-// save 落盘（DPAPI 密文，原子写）。
+// save 落盘（DPAPI 密文，原子写）。多账号：按账号名分文件 `<account>.bin`，
+// 并把它记为当前激活账号；account 为空时退回旧版单文件（兼容极端场景）。
 func (s *Store) save(cred *Credential) {
 	payload, err := json.Marshal(map[string]any{
 		"accessToken":  cred.AccessToken,
@@ -108,14 +130,42 @@ func (s *Store) save(cred *Credential) {
 		s.log.Warn("OAuth 凭据加密失败（下次启动需重新授权）", slog.String("err", err.Error()))
 		return
 	}
-	if err := writeFileAtomic(s.path, blob); err != nil {
+	path := s.path
+	if name := accountFile(cred.Account); name != "" {
+		path = filepath.Join(s.dir, name)
+	}
+	if err := writeFileAtomic(path, blob); err != nil {
 		// 落盘失败不影响本次使用，只是下次启动要重新授权
 		s.log.Warn("OAuth 凭据落盘失败（下次启动需重新授权）", slog.String("err", err.Error()))
+		return
+	}
+	if path != s.path {
+		// 写的是分账号文件：同步激活标记，下次 load/SelectAccount 才能找到它
+		_ = writeFileAtomic(filepath.Join(s.dir, ActiveFile), []byte(cred.Account))
 	}
 }
 
+// loadCurrent 激活账号的凭据文件路径：有 active 标记 → <account>.bin；
+// 没有则旧版单文件（升级网关不丢登录态）。
+func (s *Store) loadCurrent() string {
+	if name := accountFile(readTrim(filepath.Join(s.dir, ActiveFile))); name != "" {
+		p := filepath.Join(s.dir, name)
+		if fileExists(p) {
+			return p
+		}
+	}
+	if fileExists(s.path) {
+		return s.path
+	}
+	return ""
+}
+
 func (s *Store) load() *Credential {
-	blob, err := os.ReadFile(s.path)
+	path := s.loadCurrent()
+	if path == "" {
+		return nil
+	}
+	blob, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
@@ -147,7 +197,31 @@ func (s *Store) load() *Credential {
 	}
 }
 
-// SaveLogin 授权成功后入库。
+// accountFile 账号名 → 凭据文件名。账号名可能含路径分隔符等字符，一律
+// sha256 成 hex 再拼 .bin，杜绝目录穿越；空账号返回空串。
+func accountFile(account string) string {
+	if account == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(account))
+	return hex.EncodeToString(sum[:16]) + ".bin"
+}
+
+func readTrim(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// SaveLogin 授权成功后入库。多账号：同号授权覆盖旧凭据，异号新开一份
+// `<account>.bin` 且立即切换为激活账号——面板上「换个号登录」即换用。
 func (s *Store) SaveLogin(cred *Credential) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,6 +236,116 @@ func (s *Store) HasSaved() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.load() != nil
+}
+
+// ListAccounts 落盘的全部账号（含激活标记）。旧版单文件迁移前的凭据
+// account 为空时显示为 "?"。
+func (s *Store) ListAccounts() []AccountInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	active := readTrim(filepath.Join(s.dir, ActiveFile))
+	bins, _ := filepath.Glob(filepath.Join(s.dir, "*.bin"))
+	legacy := ""
+	if fileExists(s.path) && active == "" {
+		legacy = s.path
+	}
+	var out []AccountInfo
+	for _, p := range append(bins, legacy) {
+		if p == "" {
+			continue
+		}
+		cred := s.loadFile(p)
+		if cred == nil {
+			continue
+		}
+		name := cred.Account
+		if name == "" {
+			name = "?"
+		}
+		exp := ""
+		if cred.AccessToken != "" {
+			exp = lanes.FmtExp(cred.AccessToken)
+		}
+		out = append(out, AccountInfo{
+			Account: first12(name), Active: name == active || (legacy != "" && p == legacy),
+			TokenExp: exp, HasRefresh: cred.RefreshToken != "",
+		})
+	}
+	return out
+}
+
+// SelectAccount 切换激活账号（网关后续请求立刻用新号）。name 必须与
+// ListAccounts 返回的 Account 一致（激活标记里存的是完整账号名）。
+func (s *Store) SelectAccount(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// 从落盘账号里找匹配（列表显示的是前 12 位，全量比对在文件里）
+	bins, _ := filepath.Glob(filepath.Join(s.dir, "*.bin"))
+	for _, p := range bins {
+		cred := s.loadFile(p)
+		if cred == nil || cred.Account == "" {
+			continue
+		}
+		if cred.Account == name || first12(cred.Account) == name {
+			if err := writeFileAtomic(filepath.Join(s.dir, ActiveFile), []byte(cred.Account)); err != nil {
+				return err
+			}
+			s.cred, s.at = cred, time.Now()
+			return nil
+		}
+	}
+	return newErr("没有这个账号的凭据: "+name, nil, nil)
+}
+
+// DeleteAccount 删除一个落盘账号的凭据文件；删的是当前激活账号则连
+// active 标记一起清掉（下次 Get 报未登录，符合预期）。旧版单文件不在此列。
+func (s *Store) DeleteAccount(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	bins, _ := filepath.Glob(filepath.Join(s.dir, "*.bin"))
+	for _, p := range bins {
+		cred := s.loadFile(p)
+		if cred == nil {
+			continue
+		}
+		if cred.Account == name || (cred.Account != "" && first12(cred.Account) == name) {
+			if err := os.Remove(p); err != nil {
+				return err
+			}
+			if s.cred != nil && s.cred.Account == cred.Account {
+				s.cred, s.at = nil, time.Time{}
+				_ = os.Remove(filepath.Join(s.dir, ActiveFile))
+			}
+			return nil
+		}
+	}
+	return newErr("没有这个账号的凭据: "+name, nil, nil)
+}
+
+// loadFile 读指定路径的凭据（不碰缓存）。解不开/不合法都返回 nil。
+func (s *Store) loadFile(path string) *Credential {
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	plain, err := s.unprotectPayload(blob)
+	if err != nil {
+		return nil
+	}
+	var data struct {
+		AccessToken  string  `json:"accessToken"`
+		RefreshToken string  `json:"refreshToken"`
+		Account      string  `json:"account"`
+		ExpiresAt    *int64  `json:"expiresAt"`
+		SavedAt      float64 `json:"savedAt"`
+	}
+	if json.Unmarshal(plain, &data) != nil || data.AccessToken == "" {
+		return nil
+	}
+	return &Credential{
+		AccessToken: data.AccessToken, RefreshToken: data.RefreshToken,
+		Account: data.Account, ExpiresAt: data.ExpiresAt, SavedAt: data.SavedAt,
+	}
 }
 
 // Get 返回可用的 accessToken，必要时先刷新。

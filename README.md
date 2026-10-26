@@ -22,6 +22,8 @@ go run ./cmd/probe      # 账号面探针：任务列表 / 积分 / 余额（只
 | `desktop`（默认） | 复用 AutoClaw 桌面端登录态（`%APPDATA%/AutoClaw-official` 下的 DPAPI 加密凭据）。要求桌面端已登录且同一 Windows 用户运行本服务 |
 | `oauth` | 独立 OAuth 授权：打开 `http://127.0.0.1:8378/admin` 点登录走浏览器授权（device flow + 本地回调），凭据同样 DPAPI 加密落盘 `<状态目录>/.cred/`，与桌面端互不干扰 |
 
+**oauth 源支持多账号落盘**：每个账号一份 `<状态目录>/.cred/<sha256(account)>.bin`，面板上换个号再授权即并存（同号重授权=覆盖），`/admin/api/accounts` 列表 / `select` 切换（网关立刻用新号，无需重启）/ `delete` 删除。旧版单文件 `oauth-credential.bin` 自动兼容读取，下次落盘即迁移到分账号布局。desktop 源为只读复用（绝不回写 AutoClaw 目录）。
+
 token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭据并重试一次。
 
 ## 接口
@@ -35,7 +37,7 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `POST /v1/responses` | OpenAI Responses |
 | `GET /`、`/admin` | Web 管理面板：OAuth 登录、余额 / 积分明细、任务领取 |
 
-`/admin/api/*` 面板后端：`overview` / `credits` / `ledgers` / `claim` / `tasks` / `oauth/begin|status|cancel` / `refresh-token` / `self-check` / `probe-models`。
+`/admin/api/*` 面板后端：`overview` / `credits` / `ledgers` / `claim` / `tasks` / `oauth/begin|status|cancel` / `accounts` / `accounts/select` / `accounts/delete` / `refresh-token` / `self-check` / `probe-models`。
 
 ## 配置（环境变量 > `.env` > 默认值）
 

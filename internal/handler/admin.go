@@ -486,6 +486,77 @@ func (s *Server) adminOAuthCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已取消"})
 }
 
+// ── 多账号管理（oauth 源）────────────────────────────────────────────────
+
+// adminAccounts 落盘账号列表（含激活标记 / 到期 / refreshToken 有无）。
+func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {
+	if s.OAuth == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": fmt.Sprintf("当前不是 oauth 凭据源（AUTOCLAW_CRED_SOURCE=%s）",
+				s.Cfg.CredSource)})
+		return
+	}
+	accounts := s.OAuth.ListAccounts()
+	if accounts == nil {
+		accounts = []oauth.AccountInfo{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "accounts": accounts})
+}
+
+// adminAccountSelect 切换激活账号：网关后续请求立刻走新号（含模型目录）。
+func (s *Server) adminAccountSelect(w http.ResponseWriter, r *http.Request) {
+	if s.OAuth == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": fmt.Sprintf("当前不是 oauth 凭据源（AUTOCLAW_CRED_SOURCE=%s）",
+				s.Cfg.CredSource)})
+		return
+	}
+	name := str(infoOf(r).payload["account"])
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": "缺少 account 参数"})
+		return
+	}
+	if err := s.OAuth.SelectAccount(name); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false,
+			"message": err.Error()})
+		return
+	}
+	token, err := s.OAuth.Get()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false,
+			"message": err.Error()})
+		return
+	}
+	s.Log.Info("已切换 OAuth 账号", slog.String("account", name))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
+		"message": "已切换到 " + name, "token_exp": lanes.FmtExp(token)})
+}
+
+// adminAccountDelete 删除一个落盘账号的凭据（删激活账号 = 退出该号）。
+func (s *Server) adminAccountDelete(w http.ResponseWriter, r *http.Request) {
+	if s.OAuth == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": fmt.Sprintf("当前不是 oauth 凭据源（AUTOCLAW_CRED_SOURCE=%s）",
+				s.Cfg.CredSource)})
+		return
+	}
+	name := str(infoOf(r).payload["account"])
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": "缺少 account 参数"})
+		return
+	}
+	if err := s.OAuth.DeleteAccount(name); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false,
+			"message": err.Error()})
+		return
+	}
+	s.Log.Info("已删除 OAuth 账号凭据", slog.String("account", name))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
+		"message": "已删除 " + name})
+}
+
 // ── 凭据重载 / 自检 / 探测 ───────────────────────────────────────────────
 
 func (s *Server) adminRefreshToken(w http.ResponseWriter, r *http.Request) {

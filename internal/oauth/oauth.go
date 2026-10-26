@@ -44,7 +44,8 @@ const (
 	PathRefreshAlt   = "/userapi/v1/agent-refresh"
 	SourceID         = "autoclaw"
 	DeviceFile       = "device-id.txt"
-	CredentialFile   = "oauth-credential.bin"
+	CredentialFile   = "oauth-credential.bin" // 旧版单账号文件（读兼容，写入即迁移）
+	ActiveFile       = "active-account.txt"   // 多账号：当前选中的账号名
 	MaxResponseBytes = 256 * 1024
 )
 
