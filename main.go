@@ -72,15 +72,22 @@ func main() {
 	} else {
 		fmt.Println("本地鉴权: 未开启（仅回环）")
 	}
-	if cred, err := store.Get(); err == nil {
-		acc := cred.Account
-		if acc == "" {
-			acc = "?"
+	// 凭据横幅必须跟实际 tokenFn 的源一致：oauth 模式展示 oauth 凭据，
+	// 否则会打出桌面端旧号，误导排障（tokenFn 本身没走错，纯展示问题）。
+	if token, err := tokenFn(); err == nil && token != "" {
+		acc := "?"
+		if oauthStore != nil {
+			if cred, ok := oauthStore.Peek(); ok && cred.Account != "" {
+				acc = cred.Account
+			}
+		} else if cred, err := store.Get(); err == nil {
+			acc = cred.Account
 		}
 		if len(acc) > 12 {
 			acc = acc[:12]
 		}
-		fmt.Printf("凭据: account=%s %s\n", acc, lanes.FmtExp(cred.AccessToken))
+		fmt.Printf("凭据: source=%s account=%s %s\n",
+			cfg.CredSource, acc, lanes.FmtExp(token))
 	} else {
 		fmt.Printf("凭据不可用: %s\n", err.Error())
 		fmt.Println("  → 确认 AutoClaw 桌面端已登录，且以同一 Windows 用户身份运行本服务")

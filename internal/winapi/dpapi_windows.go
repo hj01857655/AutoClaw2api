@@ -12,11 +12,13 @@ import (
 )
 
 var (
-	modCrypt32 = syscall.NewLazyDLL("crypt32.dll")
+	modCrypt32  = syscall.NewLazyDLL("crypt32.dll")
+	modKernel32 = syscall.NewLazyDLL("kernel32.dll")
 
 	procCryptProtectData   = modCrypt32.NewProc("CryptProtectData")
 	procCryptUnprotectData = modCrypt32.NewProc("CryptUnprotectData")
-	procLocalFree          = modCrypt32.NewProc("LocalFree")
+	// LocalFree 在 kernel32（与 Python 版 ctypes 实测一致：crypt32 里没有它）
+	procLocalFree = modKernel32.NewProc("LocalFree")
 )
 
 // cryptProtectUIForbidden = CRYPTPROTECT_UI_FORBIDDEN (0x1)：不弹任何 UI。

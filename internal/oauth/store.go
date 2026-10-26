@@ -165,6 +165,17 @@ func (s *Store) HasSaved() bool {
 }
 
 // Get 返回可用的 accessToken，必要时先刷新。
+// Peek 只读缓存的凭据（不触发刷新/落盘），给启动横幅展示账号名用。
+// 未登录返回 not ok，调用方自己降级显示 "?"。
+func (s *Store) Peek() (*Credential, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cred == nil {
+		s.cred = s.load()
+	}
+	return s.cred, s.cred != nil
+}
+
 func (s *Store) Get() (string, error) {
 	now := time.Now()
 	s.mu.Lock()

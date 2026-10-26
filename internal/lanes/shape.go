@@ -197,6 +197,11 @@ func AuthSignHeaders(appID, appKey string) map[string]string {
 // ClientIdentityHeaders 官方客户端的静态身份头。
 // platform 对应 main.cjs managedPlatform()：win32->win, darwin->mac。
 // 注意：绝不为「更像官方」而补 X-Harness-Type —— 2.x 上它是 406。
+//
+// User-Agent 必须显式设置（2026-10-26 实测）：上游 WAF 对 Go 默认 UA
+// （Go-http-client/2.0）或缺失 UA 的请求直接 405（阿里云拦截页）；
+// AutoClaw/<version> 与普通浏览器 UA 均放行。BuildRequest 走到这里，
+// 对话/账号/模型目录三条通道就都带上了。
 func ClientIdentityHeaders(version, platform string) map[string]string {
 	return map[string]string{
 		"X-Tm":          platform,
@@ -206,6 +211,7 @@ func ClientIdentityHeaders(version, platform string) map[string]string {
 		"X-Lang":        "zh-CN",
 		"X-Client-Type": "pc",
 		"x_trace_id":    "autoclaw-desktop",
+		"User-Agent":    "AutoClaw/" + version,
 	}
 }
 
