@@ -221,6 +221,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin/api/oauth/begin", s.adminOAuthBegin)
 	mux.HandleFunc("/admin/api/oauth/status", s.adminOAuthStatus)
 	mux.HandleFunc("/admin/api/oauth/cancel", s.adminOAuthCancel)
+	mux.HandleFunc("/admin/api/oauth/sms/send", s.adminSmsSend)
+	mux.HandleFunc("/admin/api/oauth/sms/verify", s.adminSmsVerify)
 	mux.HandleFunc("/admin/api/accounts", s.adminAccounts)
 	mux.HandleFunc("/admin/api/accounts/select", s.adminAccountSelect)
 	mux.HandleFunc("/admin/api/accounts/delete", s.adminAccountDelete)

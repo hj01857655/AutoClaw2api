@@ -16,8 +16,8 @@ import (
 func main() {
 	cfg := config.Load()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := oauth.NewStore(cfg.OAuthDir, cfg.AuthBase, cfg.AppVersion,
-		cfg.Platform, config.AppID, cfg.AppKey, cfg.OAuthExtraHosts, cfg.Port, logger)
+	store := oauth.NewStore(cfg.OAuthDir, cfg.AuthBase, cfg.CNAuthBase,
+		cfg.AppVersion, cfg.Platform, config.AppID, cfg.AppKey, cfg.OAuthExtraHosts, cfg.Port, logger)
 	cred, ok := store.Peek()
 	if !ok {
 		fmt.Println("尚未授权：先起网关（go run .），打开 /admin 用 OAuth 授权登录")

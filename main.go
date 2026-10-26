@@ -23,8 +23,8 @@ func main() {
 	logger := handler.NewLogger(cfg.StateDir)
 	dw := dump.New(cfg.DumpOn, cfg.DumpDir, cfg.DumpMaxFiles)
 
-	oauthStore := oauth.NewStore(cfg.OAuthDir, cfg.AuthBase, cfg.AppVersion,
-		cfg.Platform, config.AppID, cfg.AppKey, cfg.OAuthExtraHosts, cfg.Port, logger)
+	oauthStore := oauth.NewStore(cfg.OAuthDir, cfg.AuthBase, cfg.CNAuthBase,
+		cfg.AppVersion, cfg.Platform, config.AppID, cfg.AppKey, cfg.OAuthExtraHosts, cfg.Port, logger)
 	acct := account.New(cfg.AccountBase, cfg.AppVersion, cfg.Platform,
 		config.AppID, cfg.AppKey)
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,8 +20,10 @@ import (
 const HTTPTimeout = 20 * time.Second
 
 // Client 账号面 OAuth 通道。Base 是裸域名（与模型网关带路径的 base 不同）。
+// CNBase 是国内版账号面 base——手机验证码登录端点只挂在国内域上。
 type Client struct {
 	Base     string
+	CNBase   string
 	Version  string
 	Platform string
 	AppID    string
@@ -30,9 +33,9 @@ type Client struct {
 	HTTP     *http.Client
 }
 
-func NewClient(base, version, platform, appID, appKey, deviceID string, extra []string) *Client {
+func NewClient(base, cnBase, version, platform, appID, appKey, deviceID string, extra []string) *Client {
 	return &Client{
-		Base: base, Version: version, Platform: platform,
+		Base: base, CNBase: cnBase, Version: version, Platform: platform,
 		AppID: appID, AppKey: appKey, DeviceID: deviceID, Extra: extra,
 		HTTP: &http.Client{Timeout: HTTPTimeout},
 	}
@@ -64,6 +67,11 @@ func (c *Client) signHeaders() map[string]string {
 // 上游成功时 HTTP 也是 200，业务结果全在 body 的 code 里——所以这里
 // **不看 HTTP 码看 code**，与官方客户端 if (envelope.code === 0) 一致。
 func (c *Client) Post(path string, payload map[string]any) (map[string]any, error) {
+	return c.PostAt(c.Base, path, payload)
+}
+
+// PostAt 同 Post，但 base 由调用方给（国内版验证码端点走 CNBase）。
+func (c *Client) PostAt(base, path string, payload map[string]any) (map[string]any, error) {
 	headers := map[string]string{
 		"Content-Type": "application/json",
 		"User-Agent":   "AutoClaw/" + c.Version,
@@ -83,7 +91,7 @@ func (c *Client) Post(path string, payload map[string]any) (map[string]any, erro
 		return nil, newErr("账号面请求失败: "+err.Error(), nil, nil)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, c.Base+path, bytes.NewReader(raw))
+	req, err := http.NewRequest(http.MethodPost, base+path, bytes.NewReader(raw))
 	if err != nil {
 		return nil, newErr("账号面请求失败: "+err.Error(), nil, nil)
 	}
@@ -235,6 +243,66 @@ func (c *Client) ExchangeOAuth(provider, code, state, navigateURI string) (*Cred
 		cred.ExpiresAt = &v
 	}
 	return cred, nil
+}
+
+// SendSmsCode 国内版第一步：向手机号发验证码（11 位，不带 +86 国家码）。
+//
+// 国内版没有网页 OAuth（overseasv1 是国际版专用），登录就是手机验证码：
+// agent-send-code → agent-login/。端点只挂在国内账号域上，所以走 CNBase。
+// device_id 沿用全局那份（落盘持久化）——refresh 时服务端按 JWT 里的
+// device_id 对账，登录与续期必须同一份。
+func (c *Client) SendSmsCode(phone string) error {
+	_, err := c.PostAt(c.CNBase, PathSmsSendCode, map[string]any{"phone": phone})
+	return err
+}
+
+// SmsLogin 国内版第二步：验证码换 token 并落成凭据。
+//
+// 两个实证约束：
+//   - code 必须按**数字**发送——上游按类型校验，字符串直接 400001；
+//   - 端点路径带尾部斜杠（/userapi/v1/agent-login/），少斜杠 404。
+//
+// 账号名取响应里的 user_id（官方客户端同款；user_name 常为空不可靠）。
+func (c *Client) SmsLogin(phone, code string) (*Credential, error) {
+	data, err := c.PostAt(c.CNBase, PathSmsLogin,
+		map[string]any{"phone": phone, "code": smsCodeValue(code)})
+	if err != nil {
+		return nil, err
+	}
+	token := strings.TrimSpace(asString(data["access_token"]))
+	refreshToken := strings.TrimSpace(asString(data["refresh_token"]))
+	account := strings.TrimSpace(asString(data["user_id"]))
+	if token == "" || refreshToken == "" || account == "" {
+		return nil, newErr("登录响应不完整（需要 access_token / refresh_token / user_id）", nil, data)
+	}
+	cred := &Credential{
+		AccessToken: token, RefreshToken: refreshToken, Account: account,
+		Phone:    phone,
+		SavedAt:  float64(time.Now().Unix()),
+	}
+	if exp, ok := JWTExp(token); ok {
+		v := exp
+		cred.ExpiresAt = &v
+	}
+	return cred, nil
+}
+
+// smsCodeValue 验证码全数字时转成数值发送（上游按类型校验，字符串 400001）。
+func smsCodeValue(code string) any {
+	digits := true
+	for _, r := range code {
+		if r < '0' || r > '9' {
+			digits = false
+			break
+		}
+	}
+	if digits && code != "" {
+		n, err := strconv.ParseInt(code, 10, 64)
+		if err == nil {
+			return n
+		}
+	}
+	return code
 }
 
 // Refresh 用 refreshToken 换新 token。

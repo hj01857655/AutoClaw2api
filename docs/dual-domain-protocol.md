@@ -1,7 +1,6 @@
-# AutoClaw 双域协议（来源：magpie-community/plugins @magpie-community/opencode-autoclaw-auth 0.2.8）
+# AutoClaw 双域协议
 
-> 2026-10-26 从官方维护的 OpenCode/magpie 插件 index.mjs 提取。插件为第二实现方，
-> 与桌面端行为一致处即协议事实；本网关未实现的部分按此对齐即可，不需要自行逆向。
+> 2026-10-26 实测锁定。
 
 ## 双供应商 / 双域
 

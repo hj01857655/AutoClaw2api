@@ -56,7 +56,7 @@ func newTestServer(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 		Invalidate: func() { env.inval.Add(1) },
 	}
 	// oauth Store 注入假 DPAPI（xor 可逆）与假凭据：health/面板读 Cached 展示账号
-	oauthStore := oauth.NewStore(t.TempDir(), "http://127.0.0.1:1",
+	oauthStore := oauth.NewStore(t.TempDir(), "http://127.0.0.1:1", "http://127.0.0.1:1",
 		cfg.AppVersion, "win", config.AppID, cfg.AppKey, nil, 0, logger)
 	oauthStore.SetDPAPI(
 		func(b []byte, _ string) ([]byte, error) { return xor5a(b), nil },

@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -404,6 +405,73 @@ func (s *Server) adminOAuthCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	s.oauthMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已取消"})
+}
+
+// ── 国内版手机验证码登录 ────────────────────────────────────────────────────
+
+// smsPhoneRe 国内版手机号：11 位、1 开头（+86 国家码不带）。
+var smsPhoneRe = regexp.MustCompile(`^1\d{10}$`)
+
+// adminSmsSend 国内版第一步：向手机号发验证码。国内版没有网页 OAuth，
+// 登录通道就是手机验证码（端点只挂国内账号域，走 AUTOCLAW_CN_AUTH_BASE）。
+func (s *Server) adminSmsSend(w http.ResponseWriter, r *http.Request) {
+	if s.OAuth == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": "凭据源未配置（oauth Store 未注入）"})
+		return
+	}
+	info := infoOf(r)
+	phone := strings.TrimSpace(str(info.payload["phone"]))
+	if !smsPhoneRe.MatchString(phone) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": "手机号必须是 11 位数字（1 开头，不带 +86）"})
+		return
+	}
+	if err := s.OAuth.SendSmsCode(phone); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"ok": false, "message": err.Error(), "code": oauthErrCode(err)})
+		return
+	}
+	s.Log.Info("国内版验证码已发送",
+		slog.String("phone", phone[:3]+"****"+phone[len(phone)-4:]))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "验证码已发送"})
+}
+
+// adminSmsVerify 国内版第二步：验证码换 token，成功即落盘并激活该账号
+//（多账号落盘与国际号同一套：国内号按 user_id 分文件并存）。
+func (s *Server) adminSmsVerify(w http.ResponseWriter, r *http.Request) {
+	if s.OAuth == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": "凭据源未配置（oauth Store 未注入）"})
+		return
+	}
+	info := infoOf(r)
+	phone := strings.TrimSpace(str(info.payload["phone"]))
+	code := strings.TrimSpace(str(info.payload["code"]))
+	if !smsPhoneRe.MatchString(phone) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": "手机号必须是 11 位数字（1 开头，不带 +86）"})
+		return
+	}
+	if code == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": "缺少验证码"})
+		return
+	}
+	cred, err := s.OAuth.LoginSms(phone, code)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"ok": false, "message": err.Error(), "code": oauthErrCode(err)})
+		return
+	}
+	s.Log.Info("国内版登录完成",
+		slog.String("account", firstN(cred.Account, 8)+"…"),
+		slog.String("exp", oauth.FmtExp(cred.AccessToken)))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "account": cred.Account,
+		"token_exp": oauth.FmtExp(cred.AccessToken),
+		"has_refresh": cred.RefreshToken != "",
+	})
 }
 
 // ── 多账号管理（oauth 源）────────────────────────────────────────────────

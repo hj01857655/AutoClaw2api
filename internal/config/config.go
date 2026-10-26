@@ -23,6 +23,7 @@ const (
 	UpstreamPath      = "/chat/completions"
 	DefaultAccount    = "https://autoglm-acceleration-api.zhipuai.cn" // 账号面裸域名（与模型网关不同 base）
 	DefaultAuthBase   = "https://autoglm-acceleration-api.zhipuai.cn"
+	DefaultCNAuthBase = "https://autoglm-api.zhipuai.cn" // 国内版账号面（手机验证码登录端点只挂国内域）
 	DefaultModel      = "zai_auto"
 	DefaultAppVersion = "2.1.0"
 	ListenHost        = "127.0.0.1" // 凭据绑死本机 DPAPI，默认仅回环
@@ -45,6 +46,7 @@ type Config struct {
 	DefaultModelName string
 	OAuthDir         string // oauth 凭据目录（默认 <状态目录>/.cred）
 	AuthBase         string // oauth 端点 base
+	CNAuthBase       string // 国内版账号面 base（验证码登录）
 	OAuthExtraHosts  []string
 }
 
@@ -113,6 +115,7 @@ func Load() *Config {
 		c.OAuthDir = filepath.Join(c.StateDir, ".cred")
 	}
 	c.AuthBase = strings.TrimRight(orDefault(os.Getenv("AUTOCLAW_AUTH_BASE"), DefaultAuthBase), "/")
+	c.CNAuthBase = strings.TrimRight(orDefault(os.Getenv("AUTOCLAW_CN_AUTH_BASE"), DefaultCNAuthBase), "/")
 	for _, h := range strings.Split(os.Getenv("AUTOCLAW_OAUTH_EXTRA_HOSTS"), ",") {
 		if h = strings.TrimSpace(strings.ToLower(h)); h != "" {
 			c.OAuthExtraHosts = append(c.OAuthExtraHosts, h)

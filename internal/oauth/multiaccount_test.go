@@ -19,7 +19,7 @@ func testLogger(t *testing.T) *slog.Logger {
 func newMultiStore(t *testing.T) *Store {
 	t.Helper()
 	dir := t.TempDir()
-	s := NewStore(dir, "http://auth.invalid", "2.1.0", "win",
+	s := NewStore(dir, "http://auth.invalid", "http://cn.auth.invalid", "2.1.0", "win",
 		"100003", "testkey", nil, 8378, testLogger(t))
 	// 假 DPAPI：xor 一字节，可逆即可（测试只关心形状不关心强度）
 	s.SetDPAPI(
@@ -191,7 +191,7 @@ func TestSaveLoginActivates(t *testing.T) {
 	// 同一目录两个 Store 实例：第二个模拟重启后的进程
 	dir := t.TempDir()
 	mk := func() *Store {
-		s := NewStore(dir, "http://auth.invalid", "2.1.0", "win",
+		s := NewStore(dir, "http://auth.invalid", "http://cn.auth.invalid", "2.1.0", "win",
 			"100003", "testkey", nil, 8378, testLogger(t))
 		s.SetDPAPI(
 			func(b []byte, _ string) ([]byte, error) {

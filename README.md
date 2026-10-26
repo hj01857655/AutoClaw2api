@@ -56,7 +56,7 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 
 ## 国内版与国际版
 
-同一套上游协议、两套账号体系（对照 [magpie-community/plugins](https://github.com/magpie-community/plugins) `packages/autoclaw` 的实测结论）：
+同一套上游协议、两套账号体系：
 
 | | 国际版（已实测） | 国内版（未实测，手头无国内号） |
 |---|---|---|
@@ -80,7 +80,7 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 
 ## 协议文档
 
-- `docs/dual-domain-protocol.md` —— 双域协议（国际 OAuth / 国内 SMS / 签名头 / 刷新轮换 / chat 约束），来源 magpie-community/plugins 官方实现
+- `docs/dual-domain-protocol.md` —— 双域协议（国际 OAuth / 国内 SMS / 签名头 / 刷新轮换 / chat 约束）
 
 ## Docker 部署
 

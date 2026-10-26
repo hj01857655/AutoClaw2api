@@ -71,7 +71,7 @@ func first12(s string) string {
 
 // NewStore 构造凭据仓库。device_id 与凭据同目录、同等级保护：它参与签名请求，
 // 且必须跨进程稳定。
-func NewStore(directory, authBase, version, platform, appID, appKey string,
+func NewStore(directory, authBase, cnAuthBase, version, platform, appID, appKey string,
 	extraHosts []string, port int, logger *slog.Logger) *Store {
 	deviceID := LoadDeviceID(directory, logger)
 	s := &Store{
@@ -79,7 +79,7 @@ func NewStore(directory, authBase, version, platform, appID, appKey string,
 		AppID: appID, AppKey: appKey, TTL: time.Hour, Port: port,
 		AuthBase:      authBase,
 		CallbackPorts: CallbackPorts,
-		Client:        NewClient(authBase, version, platform, appID, appKey, deviceID, extraHosts),
+		Client:        NewClient(authBase, cnAuthBase, version, platform, appID, appKey, deviceID, extraHosts),
 		DeviceID:      deviceID,
 		dir:           directory,
 		path:          filepath.Join(directory, CredentialFile),
@@ -217,6 +217,22 @@ func readTrim(path string) string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// SendSmsCode 国内版手机验证码登录第一步：发码（端点只在国内账号域）。
+func (s *Store) SendSmsCode(phone string) error {
+	return s.Client.SendSmsCode(phone)
+}
+
+// LoginSms 国内版手机验证码登录第二步：验证码换 token，成功即落盘并激活
+//（与 OAuth 授权同一套多账号落盘，国内号 <user_id>.bin 与国际号并存）。
+func (s *Store) LoginSms(phone, code string) (*Credential, error) {
+	cred, err := s.Client.SmsLogin(phone, code)
+	if err != nil {
+		return nil, err
+	}
+	s.SaveLogin(cred)
+	return cred, nil
 }
 
 // SaveLogin 授权成功后入库。多账号：同号授权覆盖旧凭据，异号新开一份
