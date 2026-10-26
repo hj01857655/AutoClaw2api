@@ -24,6 +24,8 @@ const (
 	DefaultAccount    = "https://autoglm-acceleration-api.zhipuai.cn" // 账号面裸域名（与模型网关不同 base）
 	DefaultAuthBase   = "https://autoglm-acceleration-api.zhipuai.cn"
 	DefaultCNAuthBase = "https://autoglm-api.zhipuai.cn" // 国内版账号面（手机验证码登录端点只挂国内域）
+	DefaultCNUpstream = "https://autoglm-acceleration-api.zhipuai.cn/autoclaw-proxy/proxy/autoclaw" // 国内版 chat（managed gateway，路径无 /v1）
+	CNUpstreamPath    = "/chat/completions"
 	DefaultModel      = "zai_auto"
 	DefaultAppVersion = "2.1.0"
 	ListenHost        = "127.0.0.1" // 凭据绑死本机 DPAPI，默认仅回环
@@ -42,6 +44,7 @@ type Config struct {
 	Platform         string // managedPlatform()：win32->win, darwin->mac
 	AppKey           string
 	UpstreamBase     string
+	CNUpstreamBase   string
 	AccountBase      string // 账号面 base（签到/余额，裸域名）
 	DefaultModelName string
 	OAuthDir         string // oauth 凭据目录（默认 <状态目录>/.cred）
@@ -108,6 +111,8 @@ func Load() *Config {
 	}
 	c.UpstreamBase = strings.TrimRight(
 		orDefault(os.Getenv("AUTOCLAW_UPSTREAM_BASE"), DefaultUpstream), "/")
+	c.CNUpstreamBase = strings.TrimRight(
+		orDefault(os.Getenv("AUTOCLAW_CN_UPSTREAM_BASE"), DefaultCNUpstream), "/")
 	c.AccountBase = strings.TrimRight(orDefault(os.Getenv("AUTOCLAW_ACCOUNT_BASE"), DefaultAccount), "/")
 	c.DefaultModelName = orDefault(os.Getenv("AUTOCLAW_DEFAULT_MODEL"), DefaultModel)
 	c.OAuthDir = os.Getenv("AUTOCLAW_OAUTH_DIR")

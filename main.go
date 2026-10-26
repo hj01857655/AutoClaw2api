@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"autoclaw2api/internal/account"
 	"autoclaw2api/internal/config"
@@ -31,6 +32,10 @@ func main() {
 	tokenFn := func() (string, error) { return oauthStore.Get() }
 	up := upstream.New(cfg.UpstreamBase, config.UpstreamPath, cfg.AppVersion,
 		cfg.Platform, config.AppID, cfg.AppKey, tokenFn, oauthStore.Invalidate, logger)
+	// 双域路由：国际账号 → .env 指定域；国内账号 → managed gateway 域（路径无 /v1）
+	up.CNBase = strings.TrimRight(cfg.CNUpstreamBase, "/")
+	up.CNPath = config.CNUpstreamPath
+	up.RegionFn = oauthStore.ActiveRegion
 
 	fetchModels := func() []string {
 		token, err := tokenFn()

@@ -241,6 +241,7 @@ func (s *Store) SaveLogin(cred *Credential) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := *cred
+	c.Region = RegionOf(c.AccessToken)
 	s.cred = &c
 	s.at = time.Now()
 	s.save(cred)
@@ -404,6 +405,7 @@ func (s *Store) Get() (string, error) {
 		if err != nil {
 			return "", err
 		}
+		fresh.Region = RegionOf(fresh.AccessToken)
 		s.cred, s.at = fresh, now
 		s.save(fresh)
 		s.log.Info("OAuth token 已刷新")
@@ -484,3 +486,16 @@ func (s *Store) Cached() *Credential {
 
 // TokenFmtExp 面板展示用的到期文案（复用 lanes 的桌面端同一份实现）。
 func TokenFmtExp(token string) string { return FmtExp(token) }
+
+// ActiveRegion 当前激活账号的域：cn | global（无凭据回退 global，配合 .env 默认域）。
+func (s *Store) ActiveRegion() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cred == nil {
+		return "global"
+	}
+	if s.cred.Region != "" {
+		return s.cred.Region
+	}
+	return RegionOf(s.cred.AccessToken)
+}

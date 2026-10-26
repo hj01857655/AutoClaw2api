@@ -104,6 +104,7 @@ var businessCodes = map[int64][2]string{
 	400001: {"请求没被接受", "参数缺失或格式不对"},
 	400002: {"签名没通过", "检查 appId / appKey"},
 	429:    {"操作太频繁", "等一会儿再试"},
+	630202: {"验证码错误", "输入收到的短信验证码"},
 	630203: {"操作太频繁", "等一会儿再试"},
 	630012: {"账号最近注销过", "换个账号"},
 	631010: {"不是该企业成员", "用个人账号登"},
@@ -205,4 +206,17 @@ func fmtCode(v *float64) string {
 		return "None"
 	}
 	return fmt.Sprintf("%.0f", *v)
+}
+
+// RegionOf 按账号 token 的 JWT source_id 判定域：以 "agent" 开头 = 国内（SMS）账号，
+// 否则国际（OAuth）账号。判不出时返回空串（调用方回退全局默认域）。
+func RegionOf(token string) string {
+	claims := JWTClaims(token)
+	if claims == nil {
+		return ""
+	}
+	if sid, ok := claims["source_id"].(string); ok && strings.HasPrefix(sid, "agent") {
+		return "cn"
+	}
+	return "global"
 }

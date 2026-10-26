@@ -17,12 +17,19 @@ go run ./cmd/probe      # 账号面探针：任务列表 / 积分 / 余额（只
 
 ## 凭据来源
 
-网关是独立服务：凭据只有 **OAuth 自主授权** 一种来源——打开
-`http://127.0.0.1:8378/admin` 点登录走浏览器授权（device flow + 本地回调），
-DPAPI 加密落盘 `<状态目录>/.cred/`。不依赖、不读取、不回写 AutoClaw 桌面端的任何文件。
+网关是独立服务：凭据只有 **登录自主获取** 一种来源，打开
+`http://127.0.0.1:8378/admin` 操作（或直接调 `/admin/api/*`），DPAPI 加密落盘
+`<状态目录>/.cred/`。不依赖、不读取、不回写 AutoClaw 桌面端的任何文件。
+两种登录通道，对应两套账号体系：
 
-> OAuth 授权走国际版端点（`/userapi/overseasv1/…`），只适用 Google / z.ai 账号。
-> 国内版账号的登录方式是**手机验证码**而非 OAuth，网关暂未实现该通道——见下节。
+- **国际版（Google / z.ai 账号）**：网页 OAuth 授权（device flow + 本地回调）。
+- **国内版（+86 手机号）**：手机验证码登录——`/admin/api/oauth/sms/send` 发码
+  → 收到短信后 `/admin/api/oauth/sms/verify` 提交验证码，成功即落盘并激活：
+
+```bash
+curl -X POST http://127.0.0.1:8378/admin/api/oauth/sms/send  -d '{"phone":"13800138000"}'
+curl -X POST http://127.0.0.1:8378/admin/api/oauth/sms/verify -d '{"phone":"13800138000","code":"123456"}'
+```
 
 **多账号落盘**：每个账号一份 `<状态目录>/.cred/<sha256(account)>.bin`，面板上换个号再授权即并存且**自动激活新号**（同号重授权=覆盖），`/admin/api/accounts` 列表 / `select` 切换（网关立刻用新号，无需重启）/ `delete` 删除。旧版单文件 `oauth-credential.bin` 自动兼容读取，下次落盘即迁移到分账号布局。
 
@@ -39,7 +46,7 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `POST /v1/responses` | OpenAI Responses |
 | `GET /`、`/admin` | Web 管理面板：OAuth 登录、余额 / 积分明细、任务领取 |
 
-`/admin/api/*` 面板后端：`overview` / `credits` / `ledgers` / `claim` / `tasks` / `oauth/begin|status|cancel` / `accounts` / `accounts/select` / `accounts/delete` / `refresh-token` / `self-check` / `probe-models`。
+`/admin/api/*` 面板后端：`overview` / `credits` / `ledgers` / `claim` / `tasks` / `oauth/begin|status|cancel` / `oauth/sms/send|verify`（国内版验证码登录）/ `accounts` / `accounts/select` / `accounts/delete` / `accounts/import` / `refresh-token` / `self-check` / `probe-models`。
 
 ## 配置（环境变量 > `.env` > 默认值）
 
@@ -50,26 +57,35 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `AUTOCLAW2API_STATE_DIR` | exe 所在目录 | panel.html / request.log / dumps/ / .cred/ 落点 |
 | `AUTOCLAW_APP_VERSION` / `AUTOCLAW_PLATFORM` / `AUTOCLAW_APP_KEY` | `2.1.0` / `win` / 内置值 | 客户端身份参数（对齐桌面端 2.x） |
 | `AUTOCLAW_UPSTREAM_BASE` / `AUTOCLAW_ACCOUNT_BASE` / `AUTOCLAW_AUTH_BASE` | 内置值（国内域 zhipuai.cn） | 上游 / 账号面 / OAuth 端点 base。**国际版账号必须覆盖为 `https://autoglm-api.autoglm.ai`**（默认域打 chat 401），仓库根 `.env` 已预置 |
+| `AUTOCLAW_CN_AUTH_BASE` | `https://autoglm-api.zhipuai.cn` | 国内版账号面 base（手机验证码登录端点只挂国内域，独立于国际域三件套） |
 | `AUTOCLAW_DEFAULT_MODEL` | `zai_auto` | 请求未带 model 时的兜底模型 |
 | `AUTOCLAW_OAUTH_DIR` / `AUTOCLAW_OAUTH_EXTRA_HOSTS` | `<状态目录>/.cred` | oauth 凭据目录 / OAuth 回调白名单附加 host |
 | `DUMP` / `DUMP_DIR` / `DUMP_MAX_FILES` | 开 / `dumps` / 20 | 上游请求 / 响应落盘（排障用） |
 
 ## 国内版与国际版
 
-同一套上游协议、两套账号体系：
+AutoClaw 有两套互相独立的账号体系，登录方式、域名、端点都不同。网关两条登录通道都支持，凭据落同一套多账号库（`.cred/<账号>.bin`），两版账号可并存、可在面板/`accounts/select` 间切换：
 
-| | 国际版（已实测） | 国内版（未实测，手头无国内号） |
+| | 国际版 | 国内版 |
 |---|---|---|
-| 登录 | Google / z.ai 网页 OAuth（`overseasv1`） | 手机验证码：`/userapi/v1/agent-send-code` → `/userapi/v1/agent-login/`（端点带尾部斜杠，`code` 必须为数字） |
-| 登录/账号面域 | `autoglm-api.autoglm.ai` | `autoglm-api.zhipuai.cn` |
-| chat 域 | `autoglm-api.autoglm.ai` | `autoglm-acceleration-api.zhipuai.cn`（managed gateway） |
+| 账号 | Google / z.ai 账号 | +86 手机号 |
+| 登录方式 | 网页 OAuth：`/userapi/overseasv1/{p}-oauth-url` → `-oauth-login`（浏览器授权 + 本地回调） | 手机验证码：`/userapi/v1/agent-send-code` → `/userapi/v1/agent-login/`（两步 API，无浏览器环节） |
+| 登录/账号面域 | `autoglm-api.autoglm.ai` | `autoglm-api.zhipuai.cn`（`AUTOCLAW_CN_AUTH_BASE`，独立于国际域三件套） |
+| chat 域 | `autoglm-api.autoglm.ai`（`AUTOCLAW_UPSTREAM_BASE`） | `autoglm-acceleration-api.zhipuai.cn`（默认值即是） |
 | chat 路径 | `/autoclaw-proxy/proxy/autoclaw[/v1]/chat/completions`（`/v1/` 可省） | 同左且不带 `/v1/`——与网关默认拼接一致 |
 | 身份头参考值 | X-Channel=AutoClaw4、X-Version=1.18.1 | X-Channel=AutoClaw26、X-Version=2.1.0、X-Agent-Id=main |
 | refresh | `/userapi/v1/refresh`（code 400002 回落 `/userapi/v1/agent-refresh`） | 同左，仅 host 优先序不同（国内号先打国内域） |
 
 账号体系识别：refresh token 的 JWT `source_id` claim 以 `agent` 开头 = 国内（短信）账号，否则为国际 OAuth 账号。
 
-网关现状：chat / refresh / 面板探针层按 base 域两版通吃（`AUTOCLAW_*_BASE` 默认值即国内域形状）；**登录层只实现了国际 OAuth**——国内号凭据无法经 `/admin` 获取，国内版链路在拿到国内凭据前无法端到端验证。网关实测国际版对 X-Channel 不做硬校验（发 `official` 亦 200）。
+**国内版验证状态（2026-10-27 实测）**：
+
+- 发码端点 `agent-send-code` **实测打通**：真实手机号请求返回 code:0，短信正常下发；
+- 验证码校验 `agent-login/` **实测到达业务层**：错误验证码返回 `630202 验证码错误`——签名或请求形状不对会是 400002 / 400001，走到验证码比对说明前置全对；
+- 「真验证码 → token」最后一步需要一个真实国内手机号收码，拿到号即闭环：verify 成功后凭据自动落盘激活，chat 直接可用；
+- 两套号的 token 不混域：国际 token 打国内 chat 域 401，反之亦然，chat 域要跟账号走。
+
+网关实测国际版对 X-Channel 不做硬校验（发 `official` 亦 200）；国内版头组按参考实现逐项对齐，未单独实测。
 
 ## 实现要点（实证结论）
 

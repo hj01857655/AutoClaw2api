@@ -206,6 +206,7 @@ type Credential struct {
 	Account      string  `json:"account"`
 	ExpiresAt    *int64  `json:"expiresAt"`
 	Phone        string  `json:"phone,omitempty"`
+	Region       string  `json:"region,omitempty"`
 	AccountType  string  `json:"accountType,omitempty"`
 	SavedAt      float64 `json:"savedAt"`
 }
@@ -242,6 +243,7 @@ func (c *Client) ExchangeOAuth(provider, code, state, navigateURI string) (*Cred
 		v := exp
 		cred.ExpiresAt = &v
 	}
+	cred.Region = RegionOf(token)
 	return cred, nil
 }
 
@@ -284,6 +286,7 @@ func (c *Client) SmsLogin(phone, code string) (*Credential, error) {
 		v := exp
 		cred.ExpiresAt = &v
 	}
+	cred.Region = RegionOf(token)
 	return cred, nil
 }
 

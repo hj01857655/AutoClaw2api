@@ -107,6 +107,13 @@ var logQuietPaths = map[string]bool{
 	"/": true, "/admin": true, "/health": true, "/favicon.ico": true,
 }
 
+// noDumpPaths 请求体不落 dumps/ 的路径——短信登录的 body 带明文手机号与
+// 验证码，落盘就是泄露（2026-10-27 实锤后修复：dumps 里抓到过明文）。
+var noDumpPaths = map[string]bool{
+	"/admin/api/oauth/sms/send":   true,
+	"/admin/api/oauth/sms/verify": true,
+}
+
 // middleware 鉴权 + rid + in: 日志 + req 落盘 + CORS（对应 before/after_request）。
 func (s *Server) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -143,7 +150,9 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		info := &reqInfo{rid: rid, t0: t0, payload: payload, rawBody: rawBody}
 		if !logQuietPaths[r.URL.Path] {
 			s.logIn(rid, r, payload, len(rawBody))
-			s.Dump.Save(rid, "req", string(rawBody))
+			if !noDumpPaths[r.URL.Path] {
+				s.Dump.Save(rid, "req", string(rawBody))
+			}
 		}
 
 		rec := &recorder{ResponseWriter: w, status: 200}

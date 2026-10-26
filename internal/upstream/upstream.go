@@ -55,6 +55,11 @@ func NewHTTPClient() *http.Client {
 // Client 上游通道。
 type Client struct {
 	Base     string // 带路径前缀的模型网关 base，如 …/autoclaw-proxy/proxy/autoclaw
+	// 双域路由：RegionFn 返回当前激活账号的域（cn|global|空=global）。
+	// global 用 Base/Path；cn 用 CNBase/CNPath（managed gateway，路径无 /v1）。
+	CNBase    string
+	CNPath    string
+	RegionFn  func() string
 	Path     string // /chat/completions
 	Version  string
 	Platform string
@@ -107,7 +112,11 @@ func (c *Client) Open(rid string, payload map[string]any) (*http.Response, error
 		if err != nil {
 			return nil, err
 		}
-		req, err := http.NewRequest(http.MethodPost, c.Base+c.Path, bytes.NewReader(raw))
+		base, path := c.Base, c.Path
+		if c.RegionFn != nil && c.RegionFn() == "cn" && c.CNBase != "" && c.CNPath != "" {
+			base, path = c.CNBase, c.CNPath
+		}
+		req, err := http.NewRequest(http.MethodPost, base+path, bytes.NewReader(raw))
 		if err != nil {
 			return nil, err
 		}
