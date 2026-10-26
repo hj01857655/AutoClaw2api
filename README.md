@@ -21,7 +21,7 @@ go run ./cmd/probe      # 账号面探针：任务列表 / 积分 / 余额（只
 `http://127.0.0.1:8378/admin` 点登录走浏览器授权（device flow + 本地回调），
 DPAPI 加密落盘 `<状态目录>/.cred/`。不依赖、不读取、不回写 AutoClaw 桌面端的任何文件。
 
-**多账号落盘**：每个账号一份 `<状态目录>/.cred/<sha256(account)>.bin`，面板上换个号再授权即并存（同号重授权=覆盖），`/admin/api/accounts` 列表 / `select` 切换（网关立刻用新号，无需重启）/ `delete` 删除。旧版单文件 `oauth-credential.bin` 自动兼容读取，下次落盘即迁移到分账号布局。
+**多账号落盘**：每个账号一份 `<状态目录>/.cred/<sha256(account)>.bin`，面板上换个号再授权即并存且**自动激活新号**（同号重授权=覆盖），`/admin/api/accounts` 列表 / `select` 切换（网关立刻用新号，无需重启）/ `delete` 删除。旧版单文件 `oauth-credential.bin` 自动兼容读取，下次落盘即迁移到分账号布局。
 
 token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭据并重试一次。
 
@@ -46,7 +46,7 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `HOST` / `PORT` | `127.0.0.1` / `8378` | 监听地址。凭据绑死本机 DPAPI，默认仅回环 |
 | `AUTOCLAW2API_STATE_DIR` | exe 所在目录 | panel.html / request.log / dumps/ / .cred/ 落点 |
 | `AUTOCLAW_APP_VERSION` / `AUTOCLAW_PLATFORM` / `AUTOCLAW_APP_KEY` | `2.1.0` / `win` / 内置值 | 客户端身份参数（对齐桌面端 2.x） |
-| `AUTOCLAW_UPSTREAM_BASE` / `AUTOCLAW_ACCOUNT_BASE` / `AUTOCLAW_AUTH_BASE` | 内置值 | 上游 / 账号面 / OAuth 端点 base |
+| `AUTOCLAW_UPSTREAM_BASE` / `AUTOCLAW_ACCOUNT_BASE` / `AUTOCLAW_AUTH_BASE` | 内置值（国内域 zhipuai.cn） | 上游 / 账号面 / OAuth 端点 base。**国际版账号必须覆盖为 `https://autoglm-api.autoglm.ai`**（默认域打 chat 401），仓库根 `.env` 已预置 |
 | `AUTOCLAW_DEFAULT_MODEL` | `zai_auto` | 请求未带 model 时的兜底模型 |
 | `AUTOCLAW_OAUTH_DIR` / `AUTOCLAW_OAUTH_EXTRA_HOSTS` | `<状态目录>/.cred` | oauth 凭据目录 / OAuth 回调白名单附加 host |
 | `DUMP` / `DUMP_DIR` / `DUMP_MAX_FILES` | 开 / `dumps` / 20 | 上游请求 / 响应落盘（排障用） |
@@ -65,7 +65,7 @@ cp .env.example .env   # 按需填写
 docker compose up -d
 ```
 
-镜像同时发布到 GHCR：`ghcr.io/hj01857655/hj01857655/AutoClaw2api`（跟随 v* 标签发布，含 latest，linux/amd64 + linux/arm64）。
+镜像同时发布到 GHCR：`ghcr.io/hj01857655/autoclaw2api`（跟随 v* 标签发布，含 latest，linux/amd64 + linux/arm64）。
 
 > 注：DPAPI 绑死 Windows 用户，容器内没有桌面端可读——默认 oauth 源正好是唯一通道；挂载持久卷保存 `.cred/`，重新部署不用再授权。
 
