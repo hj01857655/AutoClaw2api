@@ -184,3 +184,43 @@ func TestSavedAtPopulated(t *testing.T) {
 		t.Fatalf("savedAt 应落盘: %+v", cred)
 	}
 }
+
+// SaveLogin 必须同时更新激活标记：否则重启后 loadCurrent 按旧标记读回旧账号，
+// 实测症状是新登录 token 打 chat 401，手动 select 后才恢复。
+func TestSaveLoginActivates(t *testing.T) {
+	// 同一目录两个 Store 实例：第二个模拟重启后的进程
+	dir := t.TempDir()
+	mk := func() *Store {
+		s := NewStore(dir, "http://auth.invalid", "2.1.0", "win",
+			"100003", "testkey", nil, 8378, testLogger(t))
+		s.SetDPAPI(
+			func(b []byte, _ string) ([]byte, error) {
+				out := make([]byte, len(b))
+				for i, c := range b {
+					out[i] = c ^ 0x5a
+				}
+				return out, nil
+			},
+			func(b []byte) ([]byte, error) {
+				out := make([]byte, len(b))
+				for i, c := range b {
+					out[i] = c ^ 0x5a
+				}
+				return out, nil
+			},
+		)
+		return s
+	}
+
+	s := mk()
+	s.SaveLogin(&Credential{AccessToken: "tok-new", RefreshToken: "rt-new", Account: "b280d91248f0", ExpiresAt: ptrInt64(0)})
+
+	s2 := mk()
+	tok, err := s2.Get()
+	if err != nil || tok != "tok-new" {
+		t.Fatalf("重启后应读到新登录的账号, got %q err=%v", tok, err)
+	}
+	if got := s2.Cached(); got == nil || got.Account != "b280d91248f0" {
+		t.Fatalf("激活账号应为 b280d91248f0, got %+v", got)
+	}
+}

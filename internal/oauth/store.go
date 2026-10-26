@@ -228,6 +228,11 @@ func (s *Store) SaveLogin(cred *Credential) {
 	s.cred = &c
 	s.at = time.Now()
 	s.save(cred)
+	// 登录即激活：不写 ActiveFile 的话，重启后 loadCurrent 会按旧激活标记
+	// 读回旧账号（实测：新登录 token 打 chat 401，手动 select 后才恢复）。
+	if cred.Account != "" {
+		_ = writeFileAtomic(filepath.Join(s.dir, ActiveFile), []byte(cred.Account))
+	}
 }
 
 // HasSaved 磁盘上是否已有可用凭据。
