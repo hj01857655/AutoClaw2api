@@ -17,12 +17,14 @@ go run ./cmd/probe      # 账号面探针：任务列表 / 积分 / 余额（只
 
 ## 凭据来源（`AUTOCLAW_CRED_SOURCE`）
 
+网关是独立服务：**默认 `oauth` 自主授权**，不依赖 AutoClaw 桌面端，也不回写它的任何文件。
+
 | 值 | 说明 |
 |---|---|
-| `desktop`（默认） | 复用 AutoClaw 桌面端登录态（`%APPDATA%/AutoClaw-official` 下的 DPAPI 加密凭据）。要求桌面端已登录且同一 Windows 用户运行本服务 |
-| `oauth` | 独立 OAuth 授权：打开 `http://127.0.0.1:8378/admin` 点登录走浏览器授权（device flow + 本地回调），凭据同样 DPAPI 加密落盘 `<状态目录>/.cred/`，与桌面端互不干扰 |
+| `oauth`（默认） | 自主授权：打开 `http://127.0.0.1:8378/admin` 点登录走浏览器授权（device flow + 本地回调），凭据 DPAPI 加密落盘 `<状态目录>/.cred/`。无需安装桌面端 |
+| `desktop` | 可选复用：读 AutoClaw 桌面端的登录态（`%APPDATA%/AutoClaw-official`，只读，绝不回写）。要求桌面端已登录且同一 Windows 用户运行本服务 |
 
-**oauth 源支持多账号落盘**：每个账号一份 `<状态目录>/.cred/<sha256(account)>.bin`，面板上换个号再授权即并存（同号重授权=覆盖），`/admin/api/accounts` 列表 / `select` 切换（网关立刻用新号，无需重启）/ `delete` 删除。旧版单文件 `oauth-credential.bin` 自动兼容读取，下次落盘即迁移到分账号布局。desktop 源为只读复用（绝不回写 AutoClaw 目录）。
+**oauth 源支持多账号落盘**：每个账号一份 `<状态目录>/.cred/<sha256(account)>.bin`，面板上换个号再授权即并存（同号重授权=覆盖），`/admin/api/accounts` 列表 / `select` 切换（网关立刻用新号，无需重启）/ `delete` 删除。旧版单文件 `oauth-credential.bin` 自动兼容读取，下次落盘即迁移到分账号布局。
 
 token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭据并重试一次。
 
@@ -46,7 +48,7 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `API_KEY` | 空 | 非空 = 入口鉴权（Bearer / x-api-key） |
 | `HOST` / `PORT` | `127.0.0.1` / `8378` | 监听地址。凭据绑死本机 DPAPI，默认仅回环 |
 | `AUTOCLAW2API_STATE_DIR` | exe 所在目录 | panel.html / request.log / dumps/ / .cred/ 落点 |
-| `AUTOCLAW_CRED_SOURCE` | `desktop` | 凭据源（见上表） |
+| `AUTOCLAW_CRED_SOURCE` | `oauth` | 凭据源（见上表） |
 | `AUTOCLAW_BASE` | `%APPDATA%/AutoClaw-official` | desktop 源的用户数据根 |
 | `AUTOCLAW_ACCOUNT` | 自动选 mtime 最新 | 多账号时指定账号目录名（sha256(accountId)） |
 | `AUTOCLAW_APP_VERSION` / `AUTOCLAW_PLATFORM` / `AUTOCLAW_APP_KEY` | `2.1.0` / `win` / 内置值 | 客户端身份参数（对齐桌面端 2.x） |
@@ -71,6 +73,6 @@ docker compose up -d
 
 镜像同时发布到 GHCR：`ghcr.io/hj01857655/hj01857655/AutoClaw2api`（跟随 v* 标签发布，含 latest，linux/amd64 + linux/arm64）。
 
-> 注：DPAPI 凭据绑死 Windows 用户，容器内 `desktop` 源不可用——Docker 部署请用 `AUTOCLAW_CRED_SOURCE=oauth` 并挂载持久卷。
+> 注：DPAPI 绑死 Windows 用户，容器内没有桌面端可读——默认 oauth 源正好是唯一通道；挂载持久卷保存 `.cred/`，重新部署不用再授权。
 
 二进制发版：推送 `v*` 标签后 Actions 自动构建 linux / windows / darwin 的 amd64 + arm64 六平台产物并发布 Release。

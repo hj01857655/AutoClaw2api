@@ -117,7 +117,7 @@ func Load() *Config {
 		orDefault(os.Getenv("AUTOCLAW_UPSTREAM_BASE"), DefaultUpstream), "/")
 	c.AccountBase = strings.TrimRight(orDefault(os.Getenv("AUTOCLAW_ACCOUNT_BASE"), DefaultAccount), "/")
 	c.DefaultModelName = orDefault(os.Getenv("AUTOCLAW_DEFAULT_MODEL"), DefaultModel)
-	c.CredSource = strings.ToLower(strings.TrimSpace(orDefault(os.Getenv("AUTOCLAW_CRED_SOURCE"), "desktop")))
+	c.CredSource = strings.ToLower(strings.TrimSpace(orDefault(os.Getenv("AUTOCLAW_CRED_SOURCE"), "oauth")))
 	c.OAuthDir = os.Getenv("AUTOCLAW_OAUTH_DIR")
 	if c.OAuthDir == "" {
 		c.OAuthDir = filepath.Join(c.StateDir, ".cred")

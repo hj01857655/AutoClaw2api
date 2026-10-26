@@ -90,7 +90,11 @@ func main() {
 			cfg.CredSource, acc, lanes.FmtExp(token))
 	} else {
 		fmt.Printf("凭据不可用: %s\n", err.Error())
-		fmt.Println("  → 确认 AutoClaw 桌面端已登录，且以同一 Windows 用户身份运行本服务")
+		if oauthStore != nil {
+			fmt.Printf("  → 打开 http://%s/admin 用 OAuth 授权登录\n", schemeHost)
+		} else {
+			fmt.Println("  → 确认 AutoClaw 桌面端已登录，且以同一 Windows 用户身份运行本服务")
+		}
 	}
 	fmt.Printf("模型目录: %s\n", joinOr(srv.ListModels()))
 
