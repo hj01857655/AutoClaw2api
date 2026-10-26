@@ -112,8 +112,6 @@ var logQuietPaths = map[string]bool{
 var noDumpPaths = map[string]bool{
 	"/admin/api/oauth/sms/send":   true,
 	"/admin/api/oauth/sms/verify": true,
-	"/admin/api/login-cn/send":    true,
-	"/admin/api/login-cn/verify":  true,
 }
 
 // middleware 鉴权 + rid + in: 日志 + req 落盘 + CORS（对应 before/after_request）。
@@ -238,8 +236,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin/api/accounts/select", s.adminAccountSelect)
 	mux.HandleFunc("/admin/api/accounts/delete", s.adminAccountDelete)
 	mux.HandleFunc("/admin/api/accounts/import", s.adminAccountImport)
-	mux.HandleFunc("/admin/api/login-cn/send", s.adminCNSendCode)
-	mux.HandleFunc("/admin/api/login-cn/verify", s.adminCNVerify)
 	mux.HandleFunc("/admin/api/refresh-token", s.adminRefreshToken)
 	mux.HandleFunc("/admin/api/self-check", s.adminSelfCheck)
 	mux.HandleFunc("/admin/api/probe-models", s.adminProbeModels)

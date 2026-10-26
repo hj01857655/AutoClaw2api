@@ -26,11 +26,11 @@ go run ./cmd/probe      # 账号面探针：任务列表 / 积分 / 余额（只
 - **国内版（+86 手机号）**：手机验证码登录，两步 API，无浏览器环节——发码 → 收到短信后提交验证码，成功即落盘并激活：
 
 ```bash
-curl -X POST http://127.0.0.1:8378/admin/api/login-cn/send  -d '{"phone":"13800138000"}'
-curl -X POST http://127.0.0.1:8378/admin/api/login-cn/verify -d '{"phone":"13800138000","code":"123456"}'
+curl -X POST http://127.0.0.1:8378/admin/api/oauth/sms/send  -d '{"phone":"13800138000"}'
+curl -X POST http://127.0.0.1:8378/admin/api/oauth/sms/verify -d '{"phone":"13800138000","code":"123456"}'
 ```
 
-> 验证码为全数字；`agent-login` 端点按数字类型校验，字符串直接 400001。
+> 验证码为全数字；`agent-login` 端点按数字类型校验，字符串直接 400001（`code:0` 也会被当空值拒收）。
 
 **多账号落盘**：每个账号一份 `<状态目录>/.cred/<sha256(account)>.bin`，面板上换个号再授权即并存且**自动激活新号**（同号重授权=覆盖），`/admin/api/accounts` 列表 / `select` 切换（网关立刻用新号，无需重启）/ `delete` 删除。旧版单文件 `oauth-credential.bin` 自动兼容读取，下次落盘即迁移到分账号布局。
 
@@ -47,7 +47,7 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `POST /v1/responses` | OpenAI Responses |
 | `GET /`、`/admin` | Web 管理面板：OAuth 登录、余额 / 积分明细、任务领取 |
 
-`/admin/api/*` 面板后端：`overview` / `credits` / `ledgers` / `claim` / `tasks` / `oauth/begin|status|cancel` / `login-cn/send|verify`（国内版验证码登录）/ `accounts` / `accounts/select` / `accounts/delete` / `accounts/import` / `refresh-token` / `self-check` / `probe-models`。
+`/admin/api/*` 面板后端：`overview` / `credits` / `ledgers` / `claim` / `tasks` / `oauth/begin|status|cancel` / `oauth/sms/send|verify`（国内版验证码登录）/ `accounts` / `accounts/select` / `accounts/delete` / `accounts/import` / `refresh-token` / `self-check` / `probe-models`。
 
 ## 配置（环境变量 > `.env` > 默认值）
 

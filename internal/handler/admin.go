@@ -13,10 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 
-	"crypto/rand"
-	"encoding/hex"
 	"time"
 
 	"autoclaw2api/internal/account"
@@ -376,84 +373,6 @@ func oauthErrCode(err error) any {
 		return e.Code
 	}
 	return nil
-}
-
-// ── 国内版手机验证码登录（CN_HOST /userapi/v1/agent-*）──────────────────
-
-// newDeviceID 生成 64 hex 随机 device_id（对齐官方插件 newDeviceId：32 字节随机）。
-// send 与 verify 之间必须同值。
-func newDeviceID() string {
-	b := make([]byte, 32)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-// cnLoginState 一次国内 SMS 登录的进行时（send 与 verify 之间保持 device_id 同值）。
-var cnLoginMu sync.Mutex
-var cnLogin = struct {
-	phone    string
-	deviceID string
-}{}
-
-func (s *Server) adminCNSendCode(w http.ResponseWriter, r *http.Request) {
-	if s.OAuth == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "凭据源未配置"})
-		return
-	}
-	var p map[string]any
-	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&p)
-	phone := strings.TrimSpace(str(p["phone"]))
-	if len(phone) != 11 || phone[0] != '1' {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "手机号必须是 11 位（不带 +86）"})
-		return
-	}
-	cnLoginMu.Lock()
-	cnLogin = struct{ phone, deviceID string }{phone: phone, deviceID: newDeviceID()}
-	cnLoginMu.Unlock()
-	if err := s.OAuth.Client.SendCodeSMS(phone, cnLogin.deviceID); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "message": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
-		"message": "验证码已发送至 " + phone[:3] + "****" + phone[7:]})
-}
-
-func (s *Server) adminCNVerify(w http.ResponseWriter, r *http.Request) {
-	if s.OAuth == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "凭据源未配置"})
-		return
-	}
-	var p map[string]any
-	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&p)
-	phone := strings.TrimSpace(str(p["phone"]))
-	code := strings.TrimSpace(str(p["code"]))
-	if code == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "缺少验证码"})
-		return
-	}
-	cnLoginMu.Lock()
-	deviceID := cnLogin.deviceID
-	cnLoginMu.Unlock()
-	if deviceID == "" || phone == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "先调用 send 获取验证码"})
-		return
-	}
-	cred, err := s.OAuth.Client.SmsLoginCN(phone, code, deviceID)
-	if err != nil || cred == nil {
-		msg := "登录失败"
-		if err != nil {
-			msg = err.Error()
-		} else {
-			msg = "登录响应缺少 access_token/refresh_token"
-		}
-		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "message": msg})
-		return
-	}
-	// 登录即激活（SaveLogin 会写 ActiveFile 并切内存）
-	s.OAuth.SaveLogin(cred)
-	s.Log.Info("国内版 SMS 登录完成", slog.String("account", cred.Account))
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "account": cred.Account,
-		"token_exp": oauth.FmtExp(cred.AccessToken), "region": cred.Region})
 }
 
 func (s *Server) adminOAuthStatus(w http.ResponseWriter, r *http.Request) {
