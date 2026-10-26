@@ -1,0 +1,22 @@
+services:
+  autoclaw2api:
+    build: .
+    container_name: autoclaw2api
+    restart: unless-stopped
+    ports:
+      - "8378:8378"
+    environment:
+      - API_KEY=${API_KEY}
+      - HOST=${HOST:-0.0.0.0}
+      - PORT=${PORT:-8378}
+      - AUTOCLAW2API_STATE_DIR=${AUTOCLAW2API_STATE_DIR:-/app/data}
+      - DUMP=${DUMP}
+      - DUMP_DIR=${DUMP_DIR:-/app/data/dump}
+    volumes:
+      - ./data:/app/data
+    networks:
+      - autoclaw2api_net
+
+networks:
+  autoclaw2api_net:
+    driver: bridge
