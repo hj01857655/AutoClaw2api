@@ -224,6 +224,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin/api/accounts", s.adminAccounts)
 	mux.HandleFunc("/admin/api/accounts/select", s.adminAccountSelect)
 	mux.HandleFunc("/admin/api/accounts/delete", s.adminAccountDelete)
+	mux.HandleFunc("/admin/api/accounts/import", s.adminAccountImport)
 	mux.HandleFunc("/admin/api/refresh-token", s.adminRefreshToken)
 	mux.HandleFunc("/admin/api/self-check", s.adminSelfCheck)
 	mux.HandleFunc("/admin/api/probe-models", s.adminProbeModels)

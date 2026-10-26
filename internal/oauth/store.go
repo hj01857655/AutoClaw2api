@@ -398,6 +398,32 @@ func (s *Store) expiring(cred *Credential, now time.Time) bool {
 	return now.Sub(s.at) >= s.TTL
 }
 
+// ForceRefresh 无视到期时间，立刻用 refreshToken 换新 token 并落盘。
+// token 已被上游作废但 refresh 仍有效时（外部脚本重登后旧 access 被轮换），
+// 这是免重新授权的恢复路径。
+func (s *Store) ForceRefresh() (string, error) {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cred == nil {
+		s.cred = s.load()
+	}
+	cred := s.cred
+	if cred == nil {
+		return "", newErr("尚未登录，无可刷新的凭据", nil, nil)
+	}
+	if cred.RefreshToken == "" {
+		return "", newErr("这份凭据没有 refreshToken，无法刷新，需重新授权", nil, nil)
+	}
+	fresh, err := s.httpRefresh(cred.RefreshToken, cred.Account)
+	if err != nil {
+		return "", err
+	}
+	s.cred, s.at = fresh, now
+	s.save(fresh)
+	return fresh.AccessToken, nil
+}
+
 // Invalidate 丢掉内存缓存（下次 Get 重新从磁盘解）。
 func (s *Store) Invalidate() {
 	s.mu.Lock()

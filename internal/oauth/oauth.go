@@ -169,6 +169,29 @@ func JWTExp(token string) (int64, bool) {
 	return 0, false
 }
 
+// JWTClaims 解 JWT payload 成 map。导入凭据时从 token 里取账号名用。
+func JWTClaims(token string) map[string]any {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil
+	}
+	payload := parts[1]
+	if pad := len(payload) % 4; pad != 0 {
+		payload += strings.Repeat("=", 4-pad)
+	}
+	raw, err := base64.URLEncoding.DecodeString(payload)
+	if err != nil {
+		if raw, err = base64.StdEncoding.DecodeString(payload); err != nil {
+			return nil
+		}
+	}
+	var data map[string]any
+	if json.Unmarshal(raw, &data) != nil {
+		return nil
+	}
+	return data
+}
+
 // providerList 报错文案里的 provider 清单（Python 用 " / ".join(OAUTH_HOSTS)，
 // dict 顺序即插入序：google 在前）。
 func providerList() string { return "google / zai" }

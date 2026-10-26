@@ -585,3 +585,39 @@ func xor5a(b []byte) []byte {
 	}
 	return out
 }
+
+// 导入端点：不带 refresh 的裸 token 也能入库并立即生效。
+func TestAccountImport(t *testing.T) {
+	env := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"hi"}}]}`))
+	})
+	body := `{"accessToken":"a.b.c","account":"imported12345678"}`
+	req, _ := http.NewRequest(http.MethodPost, "/admin/api/accounts/import",
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	env.srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("导入应成功: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"account":"imported12345678"`) {
+		t.Fatalf("响应应带回账号名: %s", rec.Body.String())
+	}
+	// 落盘后列表里可见且是激活账号
+	rec2 := httptest.NewRecorder()
+	env.srv.Handler().ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/admin/api/accounts", nil))
+	if !strings.Contains(rec2.Body.String(), "imported1234") {
+		t.Fatalf("列表应包含导入的账号: %s", rec2.Body.String())
+	}
+}
+
+// 导入缺 accessToken → 400。
+func TestAccountImportMissingToken(t *testing.T) {
+	env := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {})
+	rec := httptest.NewRecorder()
+	env.srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost,
+		"/admin/api/accounts/import", strings.NewReader(`{}`)))
+	if rec.Code != 400 {
+		t.Fatalf("缺 accessToken 应 400: %d", rec.Code)
+	}
+}

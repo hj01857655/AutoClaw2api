@@ -451,6 +451,47 @@ func (s *Server) adminAccountSelect(w http.ResponseWriter, r *http.Request) {
 		"message": "已切换到 " + name, "token_exp": oauth.FmtExp(token)})
 }
 
+// adminAccountImport 手动导入凭据（免浏览器授权）：手上已有 access/refresh
+// token（比如外部登录脚本产出的）时直接入库，复用 SaveLogin 的落盘与切换语义。
+// account 缺省时从 JWT payload 里解（uid / user_id / sub 依次试）。
+func (s *Server) adminAccountImport(w http.ResponseWriter, r *http.Request) {
+	if s.OAuth == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": "凭据源未配置（oauth Store 未注入）"})
+		return
+	}
+	p := infoOf(r).payload
+	token := str(p["accessToken"])
+	refreshToken := str(p["refreshToken"])
+	account := str(p["account"])
+	if token == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": "缺少 accessToken"})
+		return
+	}
+	if account == "" {
+		claims := oauth.JWTClaims(token)
+		for _, k := range []string{"uid", "user_id", "sub"} {
+			if v, ok := claims[k].(string); ok && v != "" {
+				account = v
+				break
+			}
+		}
+	}
+	if account == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
+			"message": "解不出账号名，请在 account 字段里指定"})
+		return
+	}
+	s.OAuth.SaveLogin(&oauth.Credential{
+		AccessToken: token, RefreshToken: refreshToken, Account: account,
+	})
+	s.Log.Info("已导入 OAuth 凭据", slog.String("account", account))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
+		"account": account, "token_exp": oauth.FmtExp(token),
+		"has_refresh": refreshToken != ""})
+}
+
 // adminAccountDelete 删除一个落盘账号的凭据（删激活账号 = 退出该号）。
 func (s *Server) adminAccountDelete(w http.ResponseWriter, r *http.Request) {
 	if s.OAuth == nil {
@@ -478,6 +519,18 @@ func (s *Server) adminAccountDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminRefreshToken(w http.ResponseWriter, r *http.Request) {
 	if s.OAuth != nil {
+		if infoOf(r).payload["force"] == true {
+			// force：跳过「快到期才刷」的判断，立刻用 refreshToken 换新
+			token, err := s.OAuth.ForceRefresh()
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"ok": false, "message": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true,
+				"message": "OAuth token 已强制刷新", "token_exp": oauth.FmtExp(token)})
+			return
+		}
 		s.OAuth.Invalidate()
 		token, err := s.OAuth.Get()
 		if err != nil {
