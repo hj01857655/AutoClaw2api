@@ -24,7 +24,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"autoclaw2api/internal/lanes"
 )
@@ -71,7 +74,10 @@ func (e *Error) Error() string { return e.Message }
 
 // Client 账号面通道。
 type Client struct {
+	DumpDir  string // 非空时账号面原始响应落盘（排障）
 	Base     string // 裸域名 ACCOUNT_BASE
+	CNBase   string // 国内版账号面裸域（任务/签到/钱包端点两域同路径，只换 base）
+	RegionFn func() string
 	Version  string
 	Platform string
 	AppID    string
@@ -105,12 +111,20 @@ func (c *Client) headers(token string) map[string]string {
 }
 
 // do 发一个账号面请求，返回原始 body 与 HTTP 状态码。
+//
+// 双域分流与 upstream.Client 同一模式：激活账号是国内号（RegionFn()=="cn"）
+// 就走 CNBase——账号面 token 归属校验按域走，国际 token 打国内域 401、反之亦然，
+// 签到/余额必须跟账号的域走。
 func (c *Client) do(method, path, token string, payload []byte) ([]byte, int, error) {
+	base := c.Base
+	if c.RegionFn != nil && c.RegionFn() == "cn" && c.CNBase != "" {
+		base = c.CNBase
+	}
 	var rdr io.Reader
 	if payload != nil {
 		rdr = bytes.NewReader(payload)
 	}
-	req, err := http.NewRequest(method, c.Base+path, rdr)
+	req, err := http.NewRequest(method, base+path, rdr)
 	if err != nil {
 		return nil, 0, &Error{Message: "账号面请求失败: " + err.Error()}
 	}
@@ -125,6 +139,13 @@ func (c *Client) do(method, path, token string, payload []byte) ([]byte, int, er
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseByte))
 	if err != nil {
 		return nil, resp.StatusCode, &Error{Message: "账号面响应读取失败: " + err.Error()}
+	}
+	if c.DumpDir != "" {
+		if dir, err := os.MkdirTemp(c.DumpDir, "acc-*"); err == nil {
+			os.Remove(dir)
+			f := filepath.Join(c.DumpDir, fmt.Sprintf("acc-%d.r%s.txt", time.Now().UnixMilli(), strings.ToLower(path[:min(12, len(path))])+fmt.Sprint(resp.StatusCode)))
+			_ = os.WriteFile(strings.ReplaceAll(f, "/", string(os.PathSeparator)), append([]byte(method+" "+path+"\n"), body...), 0644)
+		}
 	}
 	return body, resp.StatusCode, nil
 }
@@ -354,6 +375,11 @@ func (c *Client) ClaimTask(token, taskID string) (*ClaimResult, error) {
 			return &ClaimResult{Message: message, Rejected: true}, nil
 		}
 		code, hasCode := numberVal(envelope["code"])
+		// HTTP 200 且 code==0 但无 data = 今日已签（幂等，与官方插件 dailySignin
+		// 对 data 的 null 容错同语义），不是错误。
+		if status == http.StatusOK && (!hasCode || code == 0) {
+			return &ClaimResult{Already: true, Message: "今日已签到", Points: 0}, nil
+		}
 		if message == "" {
 			message = "领取响应里没有 data"
 		}

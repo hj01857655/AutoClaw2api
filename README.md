@@ -23,13 +23,14 @@ go run ./cmd/probe      # 账号面探针：任务列表 / 积分 / 余额（只
 两种登录通道，对应两套账号体系：
 
 - **国际版（Google / z.ai 账号）**：网页 OAuth 授权（device flow + 本地回调）。
-- **国内版（+86 手机号）**：手机验证码登录——`/admin/api/oauth/sms/send` 发码
-  → 收到短信后 `/admin/api/oauth/sms/verify` 提交验证码，成功即落盘并激活：
+- **国内版（+86 手机号）**：手机验证码登录，两步 API，无浏览器环节——发码 → 收到短信后提交验证码，成功即落盘并激活：
 
 ```bash
-curl -X POST http://127.0.0.1:8378/admin/api/oauth/sms/send  -d '{"phone":"13800138000"}'
-curl -X POST http://127.0.0.1:8378/admin/api/oauth/sms/verify -d '{"phone":"13800138000","code":"123456"}'
+curl -X POST http://127.0.0.1:8378/admin/api/login-cn/send  -d '{"phone":"13800138000"}'
+curl -X POST http://127.0.0.1:8378/admin/api/login-cn/verify -d '{"phone":"13800138000","code":"123456"}'
 ```
+
+> 验证码为全数字；`agent-login` 端点按数字类型校验，字符串直接 400001。
 
 **多账号落盘**：每个账号一份 `<状态目录>/.cred/<sha256(account)>.bin`，面板上换个号再授权即并存且**自动激活新号**（同号重授权=覆盖），`/admin/api/accounts` 列表 / `select` 切换（网关立刻用新号，无需重启）/ `delete` 删除。旧版单文件 `oauth-credential.bin` 自动兼容读取，下次落盘即迁移到分账号布局。
 
@@ -46,7 +47,7 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `POST /v1/responses` | OpenAI Responses |
 | `GET /`、`/admin` | Web 管理面板：OAuth 登录、余额 / 积分明细、任务领取 |
 
-`/admin/api/*` 面板后端：`overview` / `credits` / `ledgers` / `claim` / `tasks` / `oauth/begin|status|cancel` / `oauth/sms/send|verify`（国内版验证码登录）/ `accounts` / `accounts/select` / `accounts/delete` / `accounts/import` / `refresh-token` / `self-check` / `probe-models`。
+`/admin/api/*` 面板后端：`overview` / `credits` / `ledgers` / `claim` / `tasks` / `oauth/begin|status|cancel` / `login-cn/send|verify`（国内版验证码登录）/ `accounts` / `accounts/select` / `accounts/delete` / `accounts/import` / `refresh-token` / `self-check` / `probe-models`。
 
 ## 配置（环境变量 > `.env` > 默认值）
 
@@ -56,8 +57,9 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `HOST` / `PORT` | `127.0.0.1` / `8378` | 监听地址。凭据绑死本机 DPAPI，默认仅回环 |
 | `AUTOCLAW2API_STATE_DIR` | exe 所在目录 | panel.html / request.log / dumps/ / .cred/ 落点 |
 | `AUTOCLAW_APP_VERSION` / `AUTOCLAW_PLATFORM` / `AUTOCLAW_APP_KEY` | `2.1.0` / `win` / 内置值 | 客户端身份参数（对齐桌面端 2.x） |
-| `AUTOCLAW_UPSTREAM_BASE` / `AUTOCLAW_ACCOUNT_BASE` / `AUTOCLAW_AUTH_BASE` | 内置值（国内域 zhipuai.cn） | 上游 / 账号面 / OAuth 端点 base。**国际版账号必须覆盖为 `https://autoglm-api.autoglm.ai`**（默认域打 chat 401），仓库根 `.env` 已预置 |
-| `AUTOCLAW_CN_AUTH_BASE` | `https://autoglm-api.zhipuai.cn` | 国内版账号面 base（手机验证码登录端点只挂国内域，独立于国际域三件套） |
+| `AUTOCLAW_UPSTREAM_BASE` / `AUTOCLAW_ACCOUNT_BASE` / `AUTOCLAW_AUTH_BASE` | 内置值（国内域 zhipuai.cn） | 国际域三件套：上游 / 账号面 / OAuth 端点 base。**国际版账号必须覆盖为 `https://autoglm-api.autoglm.ai`**（默认域打 chat 401），仓库根 `.env` 已预置 |
+| `AUTOCLAW_CN_UPSTREAM_BASE` | `https://autoglm-acceleration-api.zhipuai.cn/autoclaw-proxy/proxy/autoclaw` | 国内版 chat 域（managed gateway）。**双域按激活账号的 JWT `source_id` 自动路由，无需手动切换** |
+| `AUTOCLAW_CN_AUTH_BASE` | `https://autoglm-api.zhipuai.cn` | 国内版账号面 base——手机验证码登录与国内号的任务/签到/钱包端点只挂国内域，独立于国际域三件套 |
 | `AUTOCLAW_DEFAULT_MODEL` | `zai_auto` | 请求未带 model 时的兜底模型 |
 | `AUTOCLAW_OAUTH_DIR` / `AUTOCLAW_OAUTH_EXTRA_HOSTS` | `<状态目录>/.cred` | oauth 凭据目录 / OAuth 回调白名单附加 host |
 | `DUMP` / `DUMP_DIR` / `DUMP_MAX_FILES` | 开 / `dumps` / 20 | 上游请求 / 响应落盘（排障用） |
@@ -78,14 +80,14 @@ AutoClaw 有两套互相独立的账号体系，登录方式、域名、端点�
 
 账号体系识别：refresh token 的 JWT `source_id` claim 以 `agent` 开头 = 国内（短信）账号，否则为国际 OAuth 账号。
 
-**国内版验证状态（2026-10-27 实测）**：
+**国内版验证状态（2026-10-27 实测，已全链路闭环）**：
 
 - 发码端点 `agent-send-code` **实测打通**：真实手机号请求返回 code:0，短信正常下发；
-- 验证码校验 `agent-login/` **实测到达业务层**：错误验证码返回 `630202 验证码错误`——签名或请求形状不对会是 400002 / 400001，走到验证码比对说明前置全对；
-- 「真验证码 → token」最后一步需要一个真实国内手机号收码，拿到号即闭环：verify 成功后凭据自动落盘激活，chat 直接可用；
-- 两套号的 token 不混域：国际 token 打国内 chat 域 401，反之亦然，chat 域要跟账号走。
+- 验证码校验 `agent-login/` **实测到达业务层**：错误验证码返回 `630202 验证码错误`——签名或请求形状不对会是 400002 / 400001，走到验证码比对说明前置全对；注意 `code:0` 会被上游当空值回 400001，全数字验证码按数值发送；
+- 真实手机号验证码登录 → token 落盘激活 → **国内域 chat 200**（正常推理回复），全链路闭环；
+- 两套号的 token 不混域：国际 token 打国内 chat 域 401，反之亦然——网关已按激活账号的 JWT `source_id` 自动分流 chat 与账号面（任务/签到/钱包），无需手动切域。
 
-网关实测国际版对 X-Channel 不做硬校验（发 `official` 亦 200）；国内版头组按参考实现逐项对齐，未单独实测。
+网关实测两版对 X-Channel 均不做硬校验（发 `official` 两域皆 200），签到/任务端点两版同路径同形状，仅 base 域不同。
 
 ## 实现要点（实证结论）
 

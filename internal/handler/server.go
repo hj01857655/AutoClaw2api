@@ -112,6 +112,8 @@ var logQuietPaths = map[string]bool{
 var noDumpPaths = map[string]bool{
 	"/admin/api/oauth/sms/send":   true,
 	"/admin/api/oauth/sms/verify": true,
+	"/admin/api/login-cn/send":    true,
+	"/admin/api/login-cn/verify":  true,
 }
 
 // middleware 鉴权 + rid + in: 日志 + req 落盘 + CORS（对应 before/after_request）。

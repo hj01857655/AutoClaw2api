@@ -28,6 +28,13 @@ func main() {
 		cfg.AppVersion, cfg.Platform, config.AppID, cfg.AppKey, cfg.OAuthExtraHosts, cfg.Port, logger)
 	acct := account.New(cfg.AccountBase, cfg.AppVersion, cfg.Platform,
 		config.AppID, cfg.AppKey)
+	// 账号面双域：任务/签到/钱包跟激活账号的域走（与 chat 分流同一 RegionFn）
+	acct.CNBase = cfg.CNAuthBase
+	acct.RegionFn = oauthStore.ActiveRegion
+	acct.DumpDir = cfg.DumpDir
+	if acct.DumpDir == "" {
+		acct.DumpDir = "dumps"
+	}
 
 	tokenFn := func() (string, error) { return oauthStore.Get() }
 	up := upstream.New(cfg.UpstreamBase, config.UpstreamPath, cfg.AppVersion,
