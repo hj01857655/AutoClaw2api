@@ -23,7 +23,7 @@ const (
 	UpstreamPath      = "/chat/completions"
 	DefaultAccount    = "https://autoglm-acceleration-api.zhipuai.cn" // 账号面裸域名（与模型网关不同 base）
 	DefaultAuthBase   = "https://autoglm-acceleration-api.zhipuai.cn"
-	DefaultCNAuthBase = "https://autoglm-api.zhipuai.cn" // 国内版账号面（手机验证码登录端点只挂国内域）
+	DefaultCNAuthBase = "https://autoglm-api.zhipuai.cn"                                            // 国内版账号面（手机验证码登录端点只挂国内域）
 	DefaultCNUpstream = "https://autoglm-acceleration-api.zhipuai.cn/autoclaw-proxy/proxy/autoclaw" // 国内版 chat（managed gateway，路径无 /v1）
 	CNUpstreamPath    = "/chat/completions"
 	DefaultModel      = "zai_auto"

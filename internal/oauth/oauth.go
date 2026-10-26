@@ -45,12 +45,12 @@ const (
 	PathRefreshAlt = "/userapi/v1/agent-refresh"
 	// 国内版手机验证码登录（overseasv1 OAuth 是国际版专用，国内版没有网页授权）。
 	// agent-login/ 的尾部斜杠是端点形状的一部分（少斜杠 404）。
-	PathSmsSendCode = "/userapi/v1/agent-send-code"
-	PathSmsLogin    = "/userapi/v1/agent-login/"
-	SourceID        = "autoclaw"
-	DeviceFile      = "device-id.txt"
-	CredentialFile  = "oauth-credential.bin" // 旧版单账号文件（读兼容，写入即迁移）
-	ActiveFile      = "active-account.txt"   // 多账号：当前选中的账号名
+	PathSmsSendCode  = "/userapi/v1/agent-send-code"
+	PathSmsLogin     = "/userapi/v1/agent-login/"
+	SourceID         = "autoclaw"
+	DeviceFile       = "device-id.txt"
+	CredentialFile   = "oauth-credential.bin" // 旧版单账号文件（读兼容，写入即迁移）
+	ActiveFile       = "active-account.txt"   // 多账号：当前选中的账号名
 	MaxResponseBytes = 256 * 1024
 )
 

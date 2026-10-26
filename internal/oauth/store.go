@@ -225,7 +225,7 @@ func (s *Store) SendSmsCode(phone string) error {
 }
 
 // LoginSms 国内版手机验证码登录第二步：验证码换 token，成功即落盘并激活
-//（与 OAuth 授权同一套多账号落盘，国内号 <user_id>.bin 与国际号并存）。
+// （与 OAuth 授权同一套多账号落盘，国内号 <user_id>.bin 与国际号并存）。
 func (s *Store) LoginSms(phone, code string) (*Credential, error) {
 	cred, err := s.Client.SmsLogin(phone, code)
 	if err != nil {
