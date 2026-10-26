@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,6 +17,7 @@ import (
 	"autoclaw2api/internal/config"
 	"autoclaw2api/internal/dump"
 	"autoclaw2api/internal/lanes"
+	"autoclaw2api/internal/oauth"
 	"autoclaw2api/internal/upstream"
 )
 
@@ -39,7 +39,6 @@ func newTestServer(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 		DumpOn: false, AppVersion: config.DefaultAppVersion, Platform: "win",
 		AppKey:           config.DefaultAppKey,
 		DefaultModelName: config.DefaultModel,
-		CredSource:       "desktop",
 	}
 	upSrv := httptest.NewServer(upstreamHandler)
 	t.Cleanup(upSrv.Close)
@@ -56,12 +55,17 @@ func newTestServer(t *testing.T, upstreamHandler http.HandlerFunc) *testEnv {
 		Sleep:      func(time.Duration) {},
 		Invalidate: func() { env.inval.Add(1) },
 	}
-	// 凭据缓存里塞一份假凭据（Path 指向不存在的文件 → mtime 检查恒通过缓存）
-	store := lanes.NewCredentialStore(filepath.Join(t.TempDir(), "nope"), "")
-	store.SetCached(&lanes.Credential{
-		AccessToken: "TESTTOKEN", Account: "abcdef1234567890", Path: "nonexistent",
+	// oauth Store 注入假 DPAPI（xor 可逆）与假凭据：health/面板读 Cached 展示账号
+	oauthStore := oauth.NewStore(t.TempDir(), "http://127.0.0.1:1",
+		cfg.AppVersion, "win", config.AppID, cfg.AppKey, nil, 0, logger)
+	oauthStore.SetDPAPI(
+		func(b []byte, _ string) ([]byte, error) { return xor5a(b), nil },
+		func(b []byte) ([]byte, error) { return xor5a(b), nil },
+	)
+	oauthStore.SaveLogin(&oauth.Credential{
+		AccessToken: "TESTTOKEN", RefreshToken: "rt", Account: "abcdef1234567890",
 	})
-	env.srv.Store = store
+	env.srv.OAuth = oauthStore
 	env.srv.Account = account.New("http://127.0.0.1:1", cfg.AppVersion, "win",
 		config.AppID, cfg.AppKey)
 	return env
@@ -571,4 +575,13 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// xor5a 测试用可逆"加密"（假 DPAPI）。
+func xor5a(b []byte) []byte {
+	out := make([]byte, len(b))
+	for i, c := range b {
+		out[i] = c ^ 0x5a
+	}
+	return out
 }

@@ -37,15 +37,12 @@ type Config struct {
 	DumpOn           bool
 	DumpDir          string
 	DumpMaxFiles     int
-	ClawBase         string // AutoClaw 用户数据根（%APPDATA%/AutoClaw-official）
-	AccountDir       string // 多账号时指定账号目录名（sha256(accountId)），空 = mtime 最新
 	AppVersion       string
 	Platform         string // managedPlatform()：win32->win, darwin->mac
 	AppKey           string
 	UpstreamBase     string
 	AccountBase      string // 账号面 base（签到/余额，裸域名）
 	DefaultModelName string
-	CredSource       string // desktop | oauth
 	OAuthDir         string // oauth 凭据目录（默认 <状态目录>/.cred）
 	AuthBase         string // oauth 端点 base
 	OAuthExtraHosts  []string
@@ -91,12 +88,6 @@ func Load() *Config {
 		c.DumpDir = filepath.Join(c.StateDir, "dumps")
 	}
 
-	// AutoClaw 用户数据根（Chromium profile）。可用环境变量覆盖以便测试。
-	c.ClawBase = os.Getenv("AUTOCLAW_BASE")
-	if c.ClawBase == "" {
-		c.ClawBase = filepath.Join(os.Getenv("APPDATA"), "AutoClaw-official")
-	}
-	c.AccountDir = os.Getenv("AUTOCLAW_ACCOUNT")
 	c.AppVersion = os.Getenv("AUTOCLAW_APP_VERSION")
 	if c.AppVersion == "" {
 		c.AppVersion = DefaultAppVersion
@@ -117,7 +108,6 @@ func Load() *Config {
 		orDefault(os.Getenv("AUTOCLAW_UPSTREAM_BASE"), DefaultUpstream), "/")
 	c.AccountBase = strings.TrimRight(orDefault(os.Getenv("AUTOCLAW_ACCOUNT_BASE"), DefaultAccount), "/")
 	c.DefaultModelName = orDefault(os.Getenv("AUTOCLAW_DEFAULT_MODEL"), DefaultModel)
-	c.CredSource = strings.ToLower(strings.TrimSpace(orDefault(os.Getenv("AUTOCLAW_CRED_SOURCE"), "oauth")))
 	c.OAuthDir = os.Getenv("AUTOCLAW_OAUTH_DIR")
 	if c.OAuthDir == "" {
 		c.OAuthDir = filepath.Join(c.StateDir, ".cred")

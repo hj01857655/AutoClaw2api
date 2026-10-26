@@ -20,9 +20,6 @@ import (
 	"autoclaw2api/internal/oauth"
 )
 
-// accountRefreshMargin desktop 源账号面 token 剩多少就续（Python _REFRESH_MARGIN_S）。
-const accountRefreshMargin = 30 * time.Minute
-
 // oauthFlowState 一次 OAuth 授权流程的实时状态（面板轮询 status 读它）。
 type oauthFlowState struct {
 	flow      *oauth.Flow
@@ -37,81 +34,15 @@ type oauthFlowState struct {
 	running   bool // 等待回调的 goroutine 还在跑
 }
 
-// ── 账号面 token（desktop 源 30min margin 续期）──────────────────────────
+// ── 账号面 token ──────────────────────────────────────────────────────────
 
-// accountToken 拿一个能打账号面的 token。oauth 源的续期由 oauth.Store.Get()
-// 自己负责；desktop 源在 token 临期时用 refreshToken 续——否则桌面端一旦退出
-// 登录，之前解出的 accessToken 只能干等到失效。
+// accountToken 拿一个能打账号面的 token。续期（提前量/双检/落盘）全部由
+// oauth.Store.Get() 自己负责。
 func (s *Server) accountToken() (string, error) {
-	if s.OAuth != nil {
-		return s.OAuth.Get()
-	}
-	if s.Store == nil {
+	if s.OAuth == nil {
 		return "", errors.New("凭据源未配置")
 	}
-	cred, err := s.Store.Get()
-	if err != nil {
-		return "", err
-	}
-	token := cred.AccessToken
-	exp, hasExp := oauth.JWTExp(token)
-	if !hasExp {
-		return token, nil // 解不出 exp 就别猜，原样用
-	}
-	if time.Now().Unix() <= exp-int64(accountRefreshMargin.Seconds()) {
-		return token, nil
-	}
-	if cred.RefreshToken == "" {
-		return token, nil // 没有 refreshToken，续不了，原样用
-	}
-
-	// 加锁：面板同时刷好几个端点时会并发打到这儿，没必要重复换 token
-	s.refreshMu.Lock()
-	defer s.refreshMu.Unlock()
-	// 双检：等锁的这段时间可能已经被别人续过了
-	cred, err = s.Store.Get()
-	if err != nil {
-		return "", err
-	}
-	token = cred.AccessToken
-	if e, ok := oauth.JWTExp(token); ok &&
-		int64(e)-time.Now().Unix() > int64(accountRefreshMargin.Seconds()) {
-		return token, nil
-	}
-	deviceID := oauth.LoadDeviceID(s.Cfg.OAuthDir, s.Log)
-	fresh, err := oauth.RefreshWithDevice(s.Cfg.AuthBase, cred.RefreshToken, deviceID,
-		s.Cfg.AppVersion, s.Cfg.Platform, config.AppID, s.Cfg.AppKey, cred.Account)
-	if err != nil {
-		// 续期失败不致命：手上这个 token 可能还能用一会儿，照旧返回。
-		// 只记下来供 overview 提示，不往外抛。
-		s.refreshMu.Lock()
-		s.refreshErr = err.Error()
-		s.refreshAt = time.Now()
-		s.refreshMu.Unlock()
-		s.Log.Warn("token 续期失败（仍用旧的）", slog.String("err", err.Error()))
-		return token, nil
-	}
-	// 把新 token 塞回 store 的缓存，否则 TTL 缓存里还是旧的，下一个并发请求
-	// 双检时又读到旧的 → 白白再换一次。借 store 自己的锁改，避免和它的热重载打架。
-	newRT := fresh.RefreshToken
-	if newRT == "" {
-		newRT = cred.RefreshToken
-	}
-	s.Store.SetCached(&lanes.Credential{
-		AccessToken:  fresh.AccessToken,
-		RefreshToken: newRT,
-		UpdatedAt:    cred.UpdatedAt,
-		Account:      cred.Account,
-		Path:         cred.Path,
-	})
-	s.refreshMu.Lock()
-	s.refreshErr = ""
-	s.refreshAt = time.Now()
-	s.refreshMu.Unlock()
-	s.Log.Info("token 已续期",
-		slog.String("旧", lanes.FmtExp(token)),
-		slog.String("新", lanes.FmtExp(fresh.AccessToken)))
-	return fresh.AccessToken, nil
+	return s.OAuth.Get()
 }
 
 // queryCredits 查积分余额，供 overview 带出去。
@@ -322,18 +253,8 @@ func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request) {
 		} else {
 			info["valid"] = true
 			info["account"] = "oauth"
-			info["token_exp"] = lanes.FmtExp(token)
+			info["token_exp"] = oauth.FmtExp(token)
 			info["updatedAt"] = time.Now().Format("2006-01-02 15:04:05")
-		}
-	} else if s.Store != nil {
-		cred, err := s.Store.Get()
-		if err != nil {
-			info["notice"] = err.Error()
-		} else {
-			info["valid"] = true
-			info["account"] = firstN(cred.Account, 12)
-			info["token_exp"] = lanes.FmtExp(cred.AccessToken)
-			info["updatedAt"] = cred.UpdatedAt
 		}
 	} else {
 		info["notice"] = "凭据源未配置"
@@ -351,7 +272,7 @@ func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request) {
 	models := s.ListModels()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"service": "AutoClaw2api", "credential": info,
-		"cred_source": s.Cfg.CredSource, "oauth_available": s.OAuth != nil,
+		"cred_source": "oauth", "oauth_available": s.OAuth != nil,
 		"credits": s.queryCredits(), "models": models, "probe": probe,
 		"local_auth": s.Cfg.APIKey != "", "app_version": s.Cfg.AppVersion,
 		"platform": s.Cfg.Platform,
@@ -371,8 +292,7 @@ func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminOAuthBegin(w http.ResponseWriter, r *http.Request) {
 	if s.OAuth == nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
-			"message": fmt.Sprintf("当前不是 oauth 凭据源（AUTOCLAW_CRED_SOURCE=%s）",
-				s.Cfg.CredSource)})
+			"message": "凭据源未配置（oauth Store 未注入）"})
 		return
 	}
 	info := infoOf(r)
@@ -437,7 +357,7 @@ func (s *Server) adminOAuthBegin(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Log.Info("OAuth 授权完成",
 			slog.String("account", firstN(account, 8)+"…"),
-			slog.String("exp", lanes.FmtExp(cred.AccessToken)))
+			slog.String("exp", oauth.FmtExp(cred.AccessToken)))
 	}()
 
 	s.Log.Info("OAuth 授权已开始",
@@ -468,7 +388,7 @@ func (s *Server) adminOAuthStatus(w http.ResponseWriter, r *http.Request) {
 		payload["code"] = st.code
 	}
 	if st.cred != nil {
-		payload["token_exp"] = lanes.FmtExp(st.cred.AccessToken)
+		payload["token_exp"] = oauth.FmtExp(st.cred.AccessToken)
 		payload["has_refresh"] = st.cred.RefreshToken != ""
 	}
 	writeJSON(w, http.StatusOK, payload)
@@ -492,8 +412,7 @@ func (s *Server) adminOAuthCancel(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {
 	if s.OAuth == nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
-			"message": fmt.Sprintf("当前不是 oauth 凭据源（AUTOCLAW_CRED_SOURCE=%s）",
-				s.Cfg.CredSource)})
+			"message": "凭据源未配置（oauth Store 未注入）"})
 		return
 	}
 	accounts := s.OAuth.ListAccounts()
@@ -507,8 +426,7 @@ func (s *Server) adminAccounts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminAccountSelect(w http.ResponseWriter, r *http.Request) {
 	if s.OAuth == nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
-			"message": fmt.Sprintf("当前不是 oauth 凭据源（AUTOCLAW_CRED_SOURCE=%s）",
-				s.Cfg.CredSource)})
+			"message": "凭据源未配置（oauth Store 未注入）"})
 		return
 	}
 	name := str(infoOf(r).payload["account"])
@@ -530,15 +448,14 @@ func (s *Server) adminAccountSelect(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Log.Info("已切换 OAuth 账号", slog.String("account", name))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
-		"message": "已切换到 " + name, "token_exp": lanes.FmtExp(token)})
+		"message": "已切换到 " + name, "token_exp": oauth.FmtExp(token)})
 }
 
 // adminAccountDelete 删除一个落盘账号的凭据（删激活账号 = 退出该号）。
 func (s *Server) adminAccountDelete(w http.ResponseWriter, r *http.Request) {
 	if s.OAuth == nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false,
-			"message": fmt.Sprintf("当前不是 oauth 凭据源（AUTOCLAW_CRED_SOURCE=%s）",
-				s.Cfg.CredSource)})
+			"message": "凭据源未配置（oauth Store 未注入）"})
 		return
 	}
 	name := str(infoOf(r).payload["account"])
@@ -569,23 +486,11 @@ func (s *Server) adminRefreshToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true,
-			"message": "OAuth 凭据已重新载入", "token_exp": lanes.FmtExp(token)})
+			"message": "OAuth 凭据已重新载入", "token_exp": oauth.FmtExp(token)})
 		return
 	}
-	if s.Store == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"ok": false, "message": "凭据源未配置"})
-		return
-	}
-	s.Store.Invalidate()
-	cred, err := s.Store.Get()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"ok": false, "message": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true,
-		"message": "凭据已重新解密", "token_exp": lanes.FmtExp(cred.AccessToken)})
+	writeJSON(w, http.StatusInternalServerError, map[string]any{
+		"ok": false, "message": "凭据源未配置"})
 }
 
 // adminSelfCheck 验证三条硬约束**此刻**是否真的生效：把「全字段污染的请求」

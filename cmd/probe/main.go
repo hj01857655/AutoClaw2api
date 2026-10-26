@@ -1,23 +1,30 @@
+// probe 账号面探针：用 oauth 凭据查任务 / 余额 / 流水 / 过期积分（只读）。
 package main
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"strconv"
 
 	"autoclaw2api/internal/account"
 	"autoclaw2api/internal/config"
-	"autoclaw2api/internal/lanes"
+	"autoclaw2api/internal/oauth"
 )
 
 func main() {
 	cfg := config.Load()
-	cred, err := lanes.DecryptCredential(cfg.ClawBase, cfg.AccountDir)
-	if err != nil {
-		fmt.Println("凭据解密失败:", err)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := oauth.NewStore(cfg.OAuthDir, cfg.AuthBase, cfg.AppVersion,
+		cfg.Platform, config.AppID, cfg.AppKey, cfg.OAuthExtraHosts, cfg.Port, logger)
+	cred, ok := store.Peek()
+	if !ok {
+		fmt.Println("尚未授权：先起网关（go run .），打开 /admin 用 OAuth 授权登录")
 		os.Exit(1)
 	}
-	fmt.Printf("账号: %s…  token 长度: %d  过期: %s\n", cred.Account[:12], len(cred.AccessToken), lanes.FmtExp(cred.AccessToken))
+	fmt.Printf("账号: %s…  token 长度: %d  过期: %s\n",
+		first12(cred.Account), len(cred.AccessToken), oauth.FmtExp(cred.AccessToken))
 
 	token := cred.AccessToken
 	if len(token) > 7 && token[:7] == "Bearer " {
@@ -69,6 +76,13 @@ func main() {
 	} else {
 		fmt.Printf("  %s 分（%s）\n", formatNum(exp.Expiring), exp.Text)
 	}
+}
+
+func first12(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }
 
 func trunc(s string, n int) string {

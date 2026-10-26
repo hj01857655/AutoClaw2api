@@ -20,7 +20,6 @@ import (
 	"autoclaw2api/internal/account"
 	"autoclaw2api/internal/config"
 	"autoclaw2api/internal/dump"
-	"autoclaw2api/internal/lanes"
 	"autoclaw2api/internal/oauth"
 	"autoclaw2api/internal/upstream"
 )
@@ -33,14 +32,8 @@ type Server struct {
 
 	// ── 运行期依赖（main 注入；测试注入假通道）──
 	Up      *upstream.Client
-	Store   *lanes.CredentialStore // desktop 凭据源；nil = 未配置
-	OAuth   *oauth.Store           // oauth 凭据源；nil = 未启用
+	OAuth   *oauth.Store // oauth 凭据源（唯一通道，独立网关不读桌面端）
 	Account *account.Client
-
-	// 账号面 token 续期状态（desktop 源），供 overview 提示
-	refreshMu  sync.Mutex
-	refreshErr string
-	refreshAt  time.Time
 
 	// 进行中的 OAuth 授权流程（begin 只起流程存句柄，后台 goroutine 等回调）
 	oauthMu   sync.Mutex

@@ -19,25 +19,18 @@ import (
 
 	"autoclaw2api/internal/adapters"
 	"autoclaw2api/internal/lanes"
+	"autoclaw2api/internal/oauth"
 	"autoclaw2api/internal/upstream"
 )
 
 // ── 凭据访问 ─────────────────────────────────────────────────────────────
 
-// token 对应 Python _token()：oauth 源走 OAuthCredentialStore，desktop 源走
-// 解密缓存。
+// token 唯一凭据源：oauth 自主授权（独立网关，不读桌面端）。
 func (s *Server) token() (string, error) {
-	if s.OAuth != nil {
-		return s.OAuth.Get()
-	}
-	if s.Store == nil {
+	if s.OAuth == nil {
 		return "", errors.New("凭据源未配置")
 	}
-	cred, err := s.Store.Get()
-	if err != nil {
-		return "", err
-	}
-	return cred.AccessToken, nil
+	return s.OAuth.Get()
 }
 
 // ── 健康检查 ─────────────────────────────────────────────────────────────
@@ -47,10 +40,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	valid := false
 	remain := ""
 	accountName := ""
-	// Python: (_store._cred or {}).get("account","")[:12]——只看解密缓存，
-	// 不触发解密；oauth 模式下它依然是 desktop 那份（可能为空）。
-	if s.Store != nil {
-		if cred := s.Store.Cached(); cred != nil {
+	if s.OAuth != nil {
+		if cred := s.OAuth.Cached(); cred != nil && cred.Account != "" {
 			accountName = firstN(cred.Account, 12)
 		}
 	}
@@ -60,7 +51,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		notice = err.Error()
 	case token != "":
 		valid = true
-		remain = lanes.FmtExp(token)
+		remain = oauth.FmtExp(token)
 	}
 	models := []string{}
 	if valid {
@@ -71,8 +62,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": valid, "service": "AutoClaw2api",
-		"base": s.Cfg.ClawBase, "upstream": s.Cfg.UpstreamBase,
-		"account": accountName, "token_exp": remain, "notice": notice,
+		"upstream": s.Cfg.UpstreamBase,
+		"account":  accountName, "token_exp": remain, "notice": notice,
 		"models": models,
 	})
 }
@@ -447,8 +438,8 @@ func (s *Server) upstreamError(rid string, resp *http.Response) (map[string]any,
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
 		errType = "authentication_error"
-		if s.Store != nil {
-			s.Store.Invalidate()
+		if s.OAuth != nil {
+			s.OAuth.Invalidate()
 		}
 	case http.StatusNotAcceptable:
 		errType = "invalid_request_error"

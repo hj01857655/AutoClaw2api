@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"autoclaw2api/internal/lanes"
 	"autoclaw2api/internal/winapi"
 )
 
@@ -264,7 +263,7 @@ func (s *Store) ListAccounts() []AccountInfo {
 		}
 		exp := ""
 		if cred.AccessToken != "" {
-			exp = lanes.FmtExp(cred.AccessToken)
+			exp = FmtExp(cred.AccessToken)
 		}
 		out = append(out, AccountInfo{
 			Account: first12(name), Active: name == active || (legacy != "" && p == legacy),
@@ -372,8 +371,7 @@ func (s *Store) Get() (string, error) {
 	cred := s.cred
 	if cred == nil {
 		return "", newErr(fmt.Sprintf(
-			"尚未登录。打开 http://127.0.0.1:%d/admin 用 OAuth 授权登录，"+
-				"或把 AUTOCLAW_CRED_SOURCE 改回 desktop 复用桌面端凭据", s.Port), nil, nil)
+			"尚未登录。打开 http://127.0.0.1:%d/admin 用 OAuth 授权登录", s.Port), nil, nil)
 	}
 
 	if s.expiring(cred, now) {
@@ -418,7 +416,7 @@ func (s *Store) SetHTTPClient(h *http.Client) {
 	s.Client.HTTP = h
 }
 
-// SetRefresher 注入刷新实现（测试用；desktop 续期也走同一条路）。
+// SetRefresher 注入刷新实现（测试用）。
 func (s *Store) SetRefresher(fn func(refreshToken, account string) (*Credential, error)) {
 	s.httpRefresh = fn
 }
@@ -438,4 +436,4 @@ func (s *Store) Cached() *Credential {
 }
 
 // TokenFmtExp 面板展示用的到期文案（复用 lanes 的桌面端同一份实现）。
-func TokenFmtExp(token string) string { return lanes.FmtExp(token) }
+func TokenFmtExp(token string) string { return FmtExp(token) }

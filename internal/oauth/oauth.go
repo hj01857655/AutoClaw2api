@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // 账号面端点路径（与模型网关同主机，但 base 必须是裸域名）。
@@ -127,6 +128,17 @@ func Explain(code any) (string, string) {
 		return "", ""
 	}
 	return got[0], got[1]
+}
+
+// FmtExp 到期文案 "2026-01-02 15:04:05 (16.2h)"；解不出返回 "?"。
+// 横幅 / 面板 / probe 共用这一份。
+func FmtExp(token string) string {
+	exp, ok := JWTExp(token)
+	if !ok || exp == 0 {
+		return "?"
+	}
+	left := float64(exp-time.Now().Unix()) / 3600.0
+	return fmt.Sprintf("%s (%.1fh)", time.Unix(exp, 0).Format("2006-01-02 15:04:05"), left)
 }
 
 // JWTExp 解 JWT payload 里的 exp（秒）。解不开返回 (0, false)。

@@ -287,14 +287,6 @@ func (c *Client) Refresh(refreshToken, account string) (*Credential, error) {
 	return nil, newErr("刷新失败", nil, nil)
 }
 
-// RefreshWithDevice 独立函数版 refresh（对应 Python 的 oauth.refresh(...)）：
-// 供 server 的 desktop 续期路径调用，它手上的 device_id 与 OAuth store 无关。
-func RefreshWithDevice(base, refreshToken, deviceID, version, platform,
-	appID, appKey, account string) (*Credential, error) {
-	c := NewClient(base, version, platform, appID, appKey, deviceID, nil)
-	return c.Refresh(refreshToken, account)
-}
-
 // LoadDeviceID 读 device_id，没有就生成一个并落盘。
 //
 // 必须稳定：oauth-url / oauth-login / refresh 要用同一个。官方客户端同样持久

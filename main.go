@@ -1,7 +1,7 @@
 // AutoClaw2api-go 入口：装配配置、日志、凭据源与上游通道。
 //
-// desktop 凭据源永远构造（/health 与面板的 account 字段读它的缓存），
-// oauth 源仅当 AUTOCLAW_CRED_SOURCE=oauth；两者可并存，互不干扰。
+// 凭据源只有 oauth 自主授权一种——独立网关，不读也不写 AutoClaw 桌面端
+// 的任何文件。
 package main
 
 import (
@@ -23,27 +23,14 @@ func main() {
 	logger := handler.NewLogger(cfg.StateDir)
 	dw := dump.New(cfg.DumpOn, cfg.DumpDir, cfg.DumpMaxFiles)
 
-	store := lanes.NewCredentialStore(cfg.ClawBase, cfg.AccountDir)
-	var oauthStore *oauth.Store
-	if cfg.CredSource == "oauth" {
-		oauthStore = oauth.NewStore(cfg.OAuthDir, cfg.AuthBase, cfg.AppVersion,
-			cfg.Platform, config.AppID, cfg.AppKey, cfg.OAuthExtraHosts, cfg.Port, logger)
-	}
+	oauthStore := oauth.NewStore(cfg.OAuthDir, cfg.AuthBase, cfg.AppVersion,
+		cfg.Platform, config.AppID, cfg.AppKey, cfg.OAuthExtraHosts, cfg.Port, logger)
 	acct := account.New(cfg.AccountBase, cfg.AppVersion, cfg.Platform,
 		config.AppID, cfg.AppKey)
 
-	tokenFn := func() (string, error) {
-		if oauthStore != nil {
-			return oauthStore.Get()
-		}
-		cred, err := store.Get()
-		if err != nil {
-			return "", err
-		}
-		return cred.AccessToken, nil
-	}
+	tokenFn := func() (string, error) { return oauthStore.Get() }
 	up := upstream.New(cfg.UpstreamBase, config.UpstreamPath, cfg.AppVersion,
-		cfg.Platform, config.AppID, cfg.AppKey, tokenFn, store.Invalidate, logger)
+		cfg.Platform, config.AppID, cfg.AppKey, tokenFn, oauthStore.Invalidate, logger)
 
 	fetchModels := func() []string {
 		token, err := tokenFn()
@@ -58,7 +45,6 @@ func main() {
 
 	srv := handler.New(cfg, logger, dw, fetchModels)
 	srv.Up = up
-	srv.Store = store
 	srv.OAuth = oauthStore
 	srv.Account = acct
 
@@ -72,29 +58,18 @@ func main() {
 	} else {
 		fmt.Println("本地鉴权: 未开启（仅回环）")
 	}
-	// 凭据横幅必须跟实际 tokenFn 的源一致：oauth 模式展示 oauth 凭据，
-	// 否则会打出桌面端旧号，误导排障（tokenFn 本身没走错，纯展示问题）。
 	if token, err := tokenFn(); err == nil && token != "" {
 		acc := "?"
-		if oauthStore != nil {
-			if cred, ok := oauthStore.Peek(); ok && cred.Account != "" {
-				acc = cred.Account
-			}
-		} else if cred, err := store.Get(); err == nil {
+		if cred, ok := oauthStore.Peek(); ok && cred.Account != "" {
 			acc = cred.Account
 		}
 		if len(acc) > 12 {
 			acc = acc[:12]
 		}
-		fmt.Printf("凭据: source=%s account=%s %s\n",
-			cfg.CredSource, acc, lanes.FmtExp(token))
+		fmt.Printf("凭据: account=%s %s\n", acc, oauth.FmtExp(token))
 	} else {
 		fmt.Printf("凭据不可用: %s\n", err.Error())
-		if oauthStore != nil {
-			fmt.Printf("  → 打开 http://%s/admin 用 OAuth 授权登录\n", schemeHost)
-		} else {
-			fmt.Println("  → 确认 AutoClaw 桌面端已登录，且以同一 Windows 用户身份运行本服务")
-		}
+		fmt.Printf("  → 打开 http://%s/admin 用 OAuth 授权登录\n", schemeHost)
 	}
 	fmt.Printf("模型目录: %s\n", joinOr(srv.ListModels()))
 
