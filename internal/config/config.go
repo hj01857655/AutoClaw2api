@@ -51,6 +51,7 @@ type Config struct {
 	AuthBase         string // oauth 端点 base
 	CNAuthBase       string // 国内版账号面 base（验证码登录）
 	OAuthExtraHosts  []string
+	AutoClaim        bool // 每日自动签到（daily_signin，默认开）
 }
 
 // StateFilePath 返回状态目录下的文件路径。
@@ -121,6 +122,12 @@ func Load() *Config {
 	}
 	c.AuthBase = strings.TrimRight(orDefault(os.Getenv("AUTOCLAW_AUTH_BASE"), DefaultAuthBase), "/")
 	c.CNAuthBase = strings.TrimRight(orDefault(os.Getenv("AUTOCLAW_CN_AUTH_BASE"), DefaultCNAuthBase), "/")
+	// 默认开；设 0/off/false 关（签到幂等，重复调只是 Already）
+	c.AutoClaim = true
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AUTOCLAW_AUTO_CLAIM"))) {
+	case "0", "off", "false":
+		c.AutoClaim = false
+	}
 	for _, h := range strings.Split(os.Getenv("AUTOCLAW_OAUTH_EXTRA_HOSTS"), ",") {
 		if h = strings.TrimSpace(strings.ToLower(h)); h != "" {
 			c.OAuthExtraHosts = append(c.OAuthExtraHosts, h)

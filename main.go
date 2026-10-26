@@ -59,6 +59,9 @@ func main() {
 	srv.Up = up
 	srv.OAuth = oauthStore
 	srv.Account = acct
+	if cfg.AutoClaim {
+		go srv.StartAutoClaim() // 每日自动签到（daily_signin，幂等；AUTOCLAW_AUTO_CLAIM=0 关）
+	}
 
 	schemeHost := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	fmt.Printf("AutoClaw2api 启动: http://%s\n", schemeHost)

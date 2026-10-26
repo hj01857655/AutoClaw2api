@@ -45,7 +45,7 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `POST /v1/chat/completions` | OpenAI Chat Completions（流式 + 工具调用） |
 | `POST /v1/messages` | Anthropic Messages（Claude Code / Cline 直连） |
 | `POST /v1/responses` | OpenAI Responses |
-| `GET /`、`/admin` | Web 管理面板：OAuth 登录、余额 / 积分明细、任务领取 |
+| `GET /`、`/admin` | Web 管理面板（内置，开箱即用）：OAuth / 短信登录、账号切换、余额 / 积分明细、任务领取、自检与模型探测。状态目录放一份自定义 `panel.html` 可覆盖内置版 |
 
 `/admin/api/*` 面板后端：`overview` / `credits` / `ledgers` / `claim` / `tasks` / `oauth/begin|status|cancel` / `oauth/sms/send|verify`（国内版验证码登录）/ `accounts` / `accounts/select` / `accounts/delete` / `accounts/import` / `refresh-token` / `self-check` / `probe-models`。
 
@@ -61,6 +61,7 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `AUTOCLAW_CN_UPSTREAM_BASE` | `https://autoglm-acceleration-api.zhipuai.cn/autoclaw-proxy/proxy/autoclaw` | 国内版 chat 域（managed gateway）。**双域按激活账号的 JWT `source_id` 自动路由，无需手动切换** |
 | `AUTOCLAW_CN_AUTH_BASE` | `https://autoglm-api.zhipuai.cn` | 国内版账号面 base——手机验证码登录与国内号的任务/签到/钱包端点只挂国内域，独立于国际域三件套 |
 | `AUTOCLAW_DEFAULT_MODEL` | `zai_auto` | 请求未带 model 时的兜底模型 |
+| `AUTOCLAW_AUTO_CLAIM` | 开 | 每日自动签到（`daily_signin`，幂等）：启动与日期变化时自动领取，设 `0`/`off`/`false` 关闭 |
 | `AUTOCLAW_OAUTH_DIR` / `AUTOCLAW_OAUTH_EXTRA_HOSTS` | `<状态目录>/.cred` | oauth 凭据目录 / OAuth 回调白名单附加 host |
 | `DUMP` / `DUMP_DIR` / `DUMP_MAX_FILES` | 开 / `dumps` / 20 | 上游请求 / 响应落盘（排障用） |
 

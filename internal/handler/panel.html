@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoClaw2api</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--line:#262b36;--tx:#e6e9ef;--dim:#8b93a3;--ok:#4ade80;--bad:#f87171;--warn:#fbbf24;--acc:#6ea8fe}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.6 "Segoe UI",system-ui,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:18px;margin:0 0 4px}
+.sub{color:var(--dim);font-size:12px;margin-bottom:16px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px;flex-wrap:wrap}
+.tabs button{background:none;border:none;color:var(--dim);padding:8px 14px;cursor:pointer;font-size:14px;border-bottom:2px solid transparent}
+.tabs button.on{color:var(--acc);border-bottom-color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+.card h3{margin:0 0 10px;font-size:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:4px 12px;font-size:13px}
+.kv b{color:var(--dim);font-weight:400}
+input,select{background:#0d0f13;border:1px solid var(--line);border-radius:6px;color:var(--tx);padding:7px 10px;font-size:13px}
+input{width:220px}
+button.act{background:var(--acc);border:none;border-radius:6px;color:#0b1220;padding:7px 14px;cursor:pointer;font-size:13px;font-weight:600}
+button.ghost{background:none;border:1px solid var(--line);border-radius:6px;color:var(--tx);padding:6px 12px;cursor:pointer;font-size:13px}
+button.danger{background:none;border:1px solid #7f1d1d;border-radius:6px;color:var(--bad);padding:6px 12px;cursor:pointer;font-size:13px}
+button:disabled{opacity:.45;cursor:default}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:400}
+.pos{color:var(--ok)}.neg{color:var(--bad)}
+.chip{display:inline-block;background:#0d0f13;border:1px solid var(--line);border-radius:99px;padding:2px 10px;font-size:12px;margin:2px 4px 2px 0}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.dim{color:var(--dim)}
+#msg{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1f2430;border:1px solid var(--line);border-radius:8px;padding:10px 18px;font-size:13px;display:none;max-width:80vw}
+.badge{display:inline-block;border-radius:99px;padding:1px 9px;font-size:11px;font-weight:600}
+.badge.on{background:#14321f;color:var(--ok)}
+.badge.off{background:#321414;color:var(--bad)}
+.mono{font-family:Consolas,monospace;font-size:12px}
+ul.constraints{margin:4px 0 0;padding-left:18px;color:var(--dim);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>AutoClaw2api 控制台</h1>
+<div class="sub" id="headsub"></div>
+<div class="tabs" id="tabs"></div>
+<div id="view"></div>
+</div>
+<div id="msg"></div>
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const api=(p,opt={})=>fetch("/admin/api/"+p,Object.assign({headers:authHeaders()},opt)).then(r=>r.json()).catch(e=>({ok:false,message:String(e)}));
+function authHeaders(){const k=localStorage.autoclaw_apikey;if(!k)return{"Content-Type":"application/json"};return{"Content-Type":"application/json","Authorization":"Bearer "+k}}
+let toastTimer;
+function toast(t,bad){const m=$("#msg");m.textContent=t;m.style.display="block";m.style.color=bad?"var(--bad)":"var(--tx)";clearTimeout(toastTimer);toastTimer=setTimeout(()=>m.style.display="none",3500)}
+const POST=(p,body)=>api(p,{method:"POST",body:JSON.stringify(body||{})});
+function esc(s){const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML}
+function fmtAmt(a){return (a>0?"+":"")+a}
+
+let TABS=["概览","登录","账号","任务","流水","诊断"],cur="概览";
+function renderTabs(){$("#tabs").innerHTML=TABS.map(t=>`<button class="${t===cur?"on":""}" onclick="go('${t}')">${t}</button>`).join("")}
+function go(t){cur=t;renderTabs();views[t]().then(h=>$("#view").innerHTML=h)}
+const V={};const views={};
+function defView(name,fn){views[name]=fn}
+
+/* ── 概览 ── */
+defView("概览",async()=>{
+  const o=await api("overview");if(!o.credential)return "加载失败";
+  const c=o.credential,cr=o.credits||{};
+  const bal=cr.available?`${cr.total} 分`:`<span class="bad">查不到: ${esc(cr.error)}</span>`;
+  const wallets=(cr.wallets||[]).map(w=>`<span class="chip">${esc(w.label)} ${esc(w.view)}</span>`).join("");
+  const exp=cr.expiring?`<div class="warn" style="font-size:12px">⚠ ${esc(cr.expiring.text||cr.expiring.expiring+" 分即将过期"+(cr.expiring.when?"（"+cr.expiring.when+"）":""))}</div>`:"";
+  const probe=o.probe&&o.probe.total?`<span class="chip">模型探测 ${o.probe.total-o.probe.unavailable}/${o.probe.total} 可调</span>`:"";
+  return `<div class="card"><h3>凭据</h3><div class="kv">
+    <b>状态</b><span class="${c.valid?"ok":"bad"}">${c.valid?"有效":"无效"}${c.notice?" — "+esc(c.notice):""}</span>
+    <b>账号</b><span class="mono">${esc(c.account||"—")}</span>
+    <b>token 到期</b><span>${esc(c.token_exp||"—")}</span>
+    <b>本地鉴权</b><span>${o.local_auth?'<span class="badge on">API_KEY 已开启</span> <input id="apikey" placeholder="API Key" style="width:160px" value="${esc(localStorage.autoclaw_apikey||"")}"> <button class="ghost" onclick="localStorage.autoclaw_apikey=document.getElementById(\'apikey\').value;toast(\'已保存，刷新生效\')">保存</button>':'<span class="badge off">未开启（仅回环）</span>'}</span>
+    <b>余额</b><span>${bal} ${wallets}</span></div>${exp}
+    <div style="margin-top:8px">${probe}${(o.models||[]).map(m=>`<span class="chip">${esc(m)}</span>`).join("")}</div></div>
+  <div class="card"><h3>上游硬约束（违反即空响应/400）</h3><ul class="constraints">${(o.constraints||[]).map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`;
+});
+
+/* ── 登录 ── */
+let oauthTimer=null;
+defView("登录",()=>Promise.resolve(`
+  <div class="card"><h3>国内版 · 手机验证码</h3>
+    <div class="row"><input id="smsPhone" placeholder="11 位手机号（不带 +86）">
+    <button class="ghost" onclick="smsSend()">发送验证码</button>
+    <input id="smsCode" placeholder="短信验证码" style="width:130px">
+    <button class="act" onclick="smsVerify()">登录</button></div>
+    <div class="dim" style="font-size:12px;margin-top:8px">登录成功即落盘并自动激活该账号；验证码按数字校验，全数字直接输入即可。</div>
+    <div id="smsOut" style="margin-top:8px"></div></div>
+  <div class="card"><h3>国际版 · 网页 OAuth</h3>
+    <div class="row"><select id="prov"><option value="zai">z.ai 账号</option><option value="google">Google 账号</option></select>
+    <button class="act" onclick="oauthBegin()">开始授权</button>
+    <button class="ghost" onclick="oauthCancel()">取消</button>
+    <span id="oauthState" class="dim"></span></div>
+    <div id="oauthUrl" style="margin-top:10px"></div></div>`));
+async function smsSend(){const p=$("#smsPhone").value.trim();const r=await POST("oauth/sms/send",{phone:p});
+  $("#smsOut").innerHTML=`<span class="${r.ok?"ok":"bad"}">${esc(r.message||"")}</span>`}
+async function smsVerify(){const r=await POST("oauth/sms/verify",{phone:$("#smsPhone").value.trim(),code:$("#smsCode").value.trim()});
+  $("#smsOut").innerHTML=`<span class="${r.ok?"ok":"bad"}">${esc(r.ok?"登录成功 账号 "+r.account+" 到期 "+r.token_exp:r.message||"")}</span>`;
+  if(r.ok)go("概览")}
+async function oauthBegin(){const r=await POST("oauth/begin",{provider:$("#prov").value});
+  if(!r.ok){$("#oauthState").innerHTML=`<span class="bad">${esc(r.message)}</span>`;return}
+  $("#oauthUrl").innerHTML=`<a href="${esc(r.url)}" target="_blank" style="color:var(--acc)">点此打开授权页（端口 ${r.port}）</a>`;
+  $("#oauthState").textContent="等待授权…";pollOauth()}
+function pollOauth(){clearInterval(oauthTimer);oauthTimer=setInterval(async()=>{
+  const r=await api("oauth/status");
+  $("#oauthState").innerHTML=r.state==="ok"?'<span class="ok">授权成功</span>':r.state==="failed"?`<span class="bad">${esc(r.error||"失败")}</span>`:r.state==="cancelled"?'<span class="dim">已取消</span>':"等待授权…";
+  if(r.state!=="waiting")clearInterval(oauthTimer);if(r.state==="ok")go("概览")},2000)}
+async function oauthCancel(){await POST("oauth/cancel");clearInterval(oauthTimer);$("#oauthState").innerHTML='<span class="dim">已取消</span>'}
+
+/* ── 账号 ── */
+defView("账号",async()=>{
+  const r=await api("accounts");if(!r.ok)return `<div class="bad">${esc(r.message)}</div>`;
+  const rows=(r.accounts||[]).map(a=>`<tr><td class="mono">${esc(a.account)}</td>
+    <td>${a.active?'<span class="badge on">激活</span>':""}</td><td>${esc(a.token_exp||"—")}</td>
+    <td>${a.has_refresh?'<span class="ok">有</span>':'<span class="dim">无</span>'}</td>
+    <td>${a.active?"":`<button class="ghost" onclick="accSel('${esc(a.account)}')">切换</button>`}
+    <button class="danger" onclick="accDel('${esc(a.account)}')">删除</button></td></tr>`).join("");
+  return `<div class="card"><h3>落盘账号</h3><table><tr><th>账号</th><th></th><th>到期</th><th>refresh</th><th></th></tr>${rows||'<tr><td colspan="5" class="dim">无账号，先去「登录」</td></tr>'}</table></div>
+  <div class="card"><h3>手动导入凭据</h3><div class="row">
+    <input id="impT" placeholder="accessToken" style="width:280px"><input id="impR" placeholder="refreshToken（可空）" style="width:220px">
+    <input id="impA" placeholder="account（可空，自动解 JWT）" style="width:180px">
+    <button class="act" onclick="accImp()">导入</button></div></div>`});
+async function accSel(a){const r=await POST("accounts/select",{account:a});toast(r.message||r.ok);go("账号")}
+async function accDel(a){if(!confirm("删除账号 "+a+" 的凭据？"))return;const r=await POST("accounts/delete",{account:a});toast(r.message||r.ok, !r.ok);go("账号")}
+async function accImp(){const r=await POST("accounts/import",{accessToken:$("#impT").value.trim(),refreshToken:$("#impR").value.trim(),account:$("#impA").value.trim()});
+  toast(r.ok?"已导入 "+r.account:r.message,!r.ok);if(r.ok)go("账号")}
+
+/* ── 任务 ── */
+defView("任务",async()=>{
+  const r=await api("tasks");if(!r.ok)return `<div class="bad">${esc(r.message)}</div>`;
+  const rows=(r.tasks||[]).map(t=>`<tr><td>${esc(t.title)}<div class="dim mono" style="font-size:11px">${esc(t.task_id)}</div></td>
+    <td class="pos">+${t.points}</td><td>${esc(t.status)}</td>
+    <td>${t.claimable?`<button class="act" onclick="claim('${esc(t.task_id)}',this)">领取</button>`:'<span class="dim">服务端触发</span>'}</td></tr>`).join("");
+  return `<div class="card"><h3>积分任务（自动签到已内置：每天首次运行自动领 daily_signin）</h3>
+    <table><tr><th>任务</th><th>积分</th><th>状态</th><th></th></tr>${rows}</table></div>`});
+async function claim(id,btn){btn.disabled=true;const r=await POST("claim",{task_id:id});
+  toast(r.message||r.ok,!r.ok);go("任务")}
+
+/* ── 流水 ── */
+let ledPage=1;
+defView("流水",async()=>{const r=await api("ledgers?page="+ledPage+"&page_size=20");if(!r.ok)return `<div class="bad">${esc(r.message)}</div>`;
+  const rows=(r.entries||[]).map(e=>`<tr><td class="dim mono">${esc((e.created_at||"").replace("T"," ").slice(0,19))}</td>
+    <td class="${e.amount>0?"pos":"neg"}">${fmtAmt(e.amount)}</td><td>${esc(e.description)}</td>
+    <td class="dim">${esc(e.model||"—")}</td></tr>`).join("");
+  return `<div class="card"><h3>积分流水 <span class="dim">第 ${r.page} 页</span></h3>
+  <table><tr><th>时间</th><th>变动</th><th>说明</th><th>模型</th></tr>${rows}</table>
+  <div class="row" style="margin-top:10px"><button class="ghost" onclick="ledPage=Math.max(1,ledPage-1);go('流水')">上一页</button>
+  <button class="ghost" onclick="ledPage++;go('流水')">下一页</button></div></div>`});
+
+/* ── 诊断 ── */
+defView("诊断",Promise.resolve().then(()=>`
+  <div class="card"><h3>凭据</h3><div class="row">
+    <button class="act" onclick="doRefresh(false)">重载凭据</button>
+    <button class="ghost" onclick="doRefresh(true)">强制刷新 token</button><span id="rfOut"></span></div></div>
+  <div class="card"><h3>自检（本地断言，不出网）</h3>
+    <button class="ghost" onclick="doSelf()">运行</button><div id="scOut" style="margin-top:10px"></div></div>
+  <div class="card"><h3>模型探测（逐模型实调）</h3>
+    <button class="ghost" onclick="doProbe()">探测</button><div id="pbOut" style="margin-top:10px"></div></div>`));
+async function doRefresh(force){const r=await POST("refresh-token",{force});
+  $("#rfOut").innerHTML=`<span class="${r.ok?"ok":"bad"}">${esc((r.message||"")+" "+(r.token_exp||""))}</span>`}
+async function doSelf(){const r=await api("self-check");
+  $("#scOut").innerHTML=(r.checks||[]).map(c=>`<div class="${c.ok?"ok":"bad"}">${c.ok?"✓":"✗"} ${esc(c.label)} <span class="dim mono" style="font-size:11px">${esc(c.detail)}</span></div>`).join("")+
+  `<div style="margin-top:6px">${r.ok?'<span class="ok">全部通过</span>':`<span class="bad">${r.passed}/${r.total}</span>`}</div>`}
+async function doProbe(){const r=await POST("probe-models",{});
+  $("#pbOut").innerHTML=`<div class="dim">${esc(r.message||"")}</div>`+(r.results||[]).map(x=>`<div class="${x.ok?"ok":"bad"}">${x.ok?"✓":"✗"} ${esc(x.id)} <span class="dim">${esc(x.note)}</span></div>`).join("")}
+
+renderTabs();go("概览");
+</script>
+</body>
+</html>

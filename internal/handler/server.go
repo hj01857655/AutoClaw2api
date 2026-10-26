@@ -55,6 +55,9 @@ type Server struct {
 	reqMu    sync.Mutex
 	bootTag  string
 	authFail int64
+
+	// 自动签到状态：当天已处理就不再调（只在 autoClaim goroutine 读写）
+	lastClaimDay string
 }
 
 // New 构造调度层。fetchModels 注入 lanes.FetchModels（测试注入假上游）。
@@ -291,15 +294,7 @@ func (s *Server) handlePanel(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	path := s.Cfg.StateFilePath("panel.html")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("AutoClaw2api running. (panel.html not installed)"))
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(raw)
+	s.servePanel(w)
 }
 
 // ── 响应辅助 ───────────────────────────────────────────────────────────────
