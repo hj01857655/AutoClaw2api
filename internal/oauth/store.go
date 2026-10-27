@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"autoclaw2api/internal/proxyclient"
 	"autoclaw2api/internal/winapi"
 )
 
@@ -43,6 +44,7 @@ type Store struct {
 	protect       func([]byte, string) ([]byte, error)
 	unprotect     func([]byte) ([]byte, error)
 	httpRefresh   func(refreshToken, account string) (*Credential, error)
+	proxyFn       func() string // 当前激活账号的出网代理（nil/空 = 直连）
 
 	mu   sync.Mutex
 	cred *Credential
@@ -52,6 +54,9 @@ type Store struct {
 	// 键为完整账号名；到点自动出冷却。不落盘——重启即清零，冷却本来就是
 	// 分钟级的临时状态。
 	cooldown map[string]time.Time
+
+	// 每账号出网代理表（config 注入；键=账号全名或 12 位前缀）。
+	proxies map[string]string
 }
 
 // RefreshMarginS 提前多久触发刷新。上游 token 有效期以 JWT exp 为准，这里只是
@@ -116,9 +121,18 @@ func (s *Store) unprotectPayload(blob []byte) ([]byte, error) {
 	return s.unprotect(blob)
 }
 
-// save 落盘（DPAPI 密文，原子写）。多账号：按账号名分文件 `<account>.bin`，
-// 并把它记为当前激活账号；account 为空时退回旧版单文件（兼容极端场景）。
+// save 落盘（DPAPI 密文，原子写）并把它记为当前激活账号。批量刷新等不改
+// 激活状态的写盘走 writeOnly。
 func (s *Store) save(cred *Credential) {
+	s.writeOnly(cred)
+	if name := accountFile(cred.Account); name != "" {
+		_ = writeFileAtomic(filepath.Join(s.dir, ActiveFile), []byte(cred.Account))
+	}
+}
+
+// writeOnly 只写凭据文件，不碰激活标记。分账号写 `<account>.bin`；account
+// 为空时退回旧版单文件（兼容极端场景）。
+func (s *Store) writeOnly(cred *Credential) {
 	payload, err := json.Marshal(map[string]any{
 		"accessToken":  cred.AccessToken,
 		"refreshToken": cred.RefreshToken,
@@ -142,11 +156,6 @@ func (s *Store) save(cred *Credential) {
 	if err := writeFileAtomic(path, blob); err != nil {
 		// 落盘失败不影响本次使用，只是下次启动要重新授权
 		s.log.Warn("OAuth 凭据落盘失败（下次启动需重新授权）", slog.String("err", err.Error()))
-		return
-	}
-	if path != s.path {
-		// 写的是分账号文件：同步激活标记，下次 load/SelectAccount 才能找到它
-		_ = writeFileAtomic(filepath.Join(s.dir, ActiveFile), []byte(cred.Account))
 	}
 }
 
@@ -423,7 +432,7 @@ func (s *Store) Get() (string, error) {
 			return "", newErr("token 已过期且没有 refreshToken，需重新授权", nil, nil)
 		}
 		s.log.Info("OAuth token 即将到期，刷新中")
-		fresh, err := s.httpRefresh(cred.RefreshToken, cred.Account)
+		fresh, err := s.doRefresh(cred.RefreshToken, cred.Account)
 		if err != nil {
 			return "", err
 		}
@@ -460,13 +469,104 @@ func (s *Store) ForceRefresh() (string, error) {
 	if cred.RefreshToken == "" {
 		return "", newErr("这份凭据没有 refreshToken，无法刷新，需重新授权", nil, nil)
 	}
-	fresh, err := s.httpRefresh(cred.RefreshToken, cred.Account)
+	fresh, err := s.doRefresh(cred.RefreshToken, cred.Account)
 	if err != nil {
 		return "", err
 	}
 	s.cred, s.at = fresh, now
 	s.save(fresh)
 	return fresh.AccessToken, nil
+}
+
+// RefreshAllExpiring 扫全部落盘账号，token 在 margin 内到期的批量续期。
+// 返回成功刷新的账号数。给后台定时任务用：把续期挪到闲时做，避免请求路径
+// 上首个撞上临期 token 的请求白等一次刷新往返。刷新走各账号自己的代理
+// （以刷新时刻的激活账号代理为准——代理表按账号配，刷新请求本身无账号上下文）。
+// 只动凭据文件，不改激活标记；激活账号同步更新内存缓存。
+func (s *Store) RefreshAllExpiring(margin time.Duration) int {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	bins, _ := filepath.Glob(filepath.Join(s.dir, "*.bin"))
+	n := 0
+	for _, p := range bins {
+		cred := s.loadFile(p)
+		if cred == nil || cred.RefreshToken == "" || cred.Account == "" {
+			continue
+		}
+		if !expiringAt(cred, now, margin) {
+			continue
+		}
+		fresh, err := s.doRefresh(cred.RefreshToken, cred.Account)
+		if err != nil {
+			s.log.Warn("批量刷新失败，账号保留旧凭据",
+				slog.String("account", first12(cred.Account)), slog.String("err", err.Error()))
+			continue
+		}
+		fresh.Region = RegionOf(fresh.AccessToken)
+		s.writeOnly(fresh)
+		if s.cred != nil && s.cred.Account == fresh.Account {
+			s.cred, s.at = fresh, now
+		}
+		n++
+		s.log.Info("批量刷新完成", slog.String("account", first12(fresh.Account)),
+			slog.String("exp", FmtExp(fresh.AccessToken)))
+	}
+	return n
+}
+
+// expiringAt 与 expiring 同判据但不依赖内存缓存时间（批量场景无 s.at，
+// 只认凭据里明确的过期时刻）。
+func expiringAt(cred *Credential, now time.Time, margin time.Duration) bool {
+	if cred.ExpiresAt == nil || *cred.ExpiresAt <= 0 {
+		return false
+	}
+	return float64(*cred.ExpiresAt)-float64(now.Unix()) < margin.Seconds()
+}
+
+// doRefresh httpRefresh 的包装：当前激活账号配了代理时，刷新请求临时切到
+// 走代理的 client（调用方持 s.mu，换回也在同一临界区，无并发问题）。
+func (s *Store) doRefresh(rt, account string) (*Credential, error) {
+	if s.proxyFn != nil {
+		if u := s.proxyFn(); u != "" {
+			if pc := proxyclient.For(u); pc != nil {
+				prev := s.Client.HTTP
+				s.Client.HTTP = pc
+				defer func() { s.Client.HTTP = prev }()
+			}
+		}
+	}
+	return s.httpRefresh(rt, account)
+}
+
+// SetProxies 注入每账号代理表（config 从 proxies.json / env 读好传进来）。
+// SetProxyFn 注入「当前激活账号的代理」查询——由 main 绑定到本 Store 自己
+// （upstream / 刷新路径都经它选路）。
+func (s *Store) SetProxies(m map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.proxies = m
+}
+
+func (s *Store) SetProxyFn(fn func() string) { s.proxyFn = fn }
+
+// ProxyFor 账号的出网代理 URL；全名或 12 位前缀命中都算，未配置返回空（直连）。
+func (s *Store) ProxyFor(account string) string {
+	if account == "" || len(s.proxies) == 0 {
+		return ""
+	}
+	if u, ok := s.proxies[account]; ok {
+		return u
+	}
+	if len(account) > 12 {
+		account = account[:12]
+	}
+	return s.proxies[account]
+}
+
+// ActiveProxy 当前激活账号的代理（upstream.ProxyFn 绑定点）。
+func (s *Store) ActiveProxy() string {
+	return s.ProxyFor(s.ActiveAccount())
 }
 
 // Invalidate 丢掉内存缓存（下次 Get 重新从磁盘解）。

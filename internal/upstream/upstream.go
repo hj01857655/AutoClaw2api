@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"autoclaw2api/internal/lanes"
+	"autoclaw2api/internal/proxyclient"
 )
 
 // MaxAttempts 总尝试次数（含首次）。
@@ -80,6 +81,11 @@ type Client struct {
 	AccountLimited func()
 	AccountOK      func()
 
+	// 每账号出网代理：返回当前激活账号的代理 URL（空=直连）。main 绑定
+	// oauth.Store.ActiveProxy；Open 每轮请求重新取值——轮转换号后下一个
+	// 请求自动用新账号的代理。
+	ProxyFn func() string
+
 	// Sleep 退避等待；测试里注入 no-op，避免真等 2/4/8 秒。
 	Sleep func(time.Duration)
 }
@@ -131,7 +137,13 @@ func (c *Client) Open(rid string, payload map[string]any) (*http.Response, error
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
-		resp, err := c.HTTP.Do(req)
+		client := c.HTTP
+		if c.ProxyFn != nil {
+			if pc := proxyclient.For(c.ProxyFn()); pc != nil {
+				client = pc
+			}
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			if attempt < MaxAttempts-1 {
 				c.Log.Warn("上游连接失败，稍后重试",

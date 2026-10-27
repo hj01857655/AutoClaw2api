@@ -8,6 +8,7 @@ package config
 
 import (
 	"bufio"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -55,6 +56,7 @@ type Config struct {
 	AutoClaim        bool          // 每日自动签到（daily_signin，默认开）
 	AdminKey         string        // /admin/api 独立钥匙（未设回退 API_KEY）
 	RotateCooldown   time.Duration // 429/持续 401 后账号冷却时长（默认 10m）
+	Proxies          map[string]string // 账号（全名或 12 位前缀）→ 出网代理 URL
 }
 
 // StateFilePath 返回状态目录下的文件路径。
@@ -140,12 +142,41 @@ func Load() *Config {
 			c.RotateCooldown = time.Duration(n) * time.Minute
 		}
 	}
+	// 每账号出网代理：状态目录 proxies.json（{"账号或12位前缀": "http://…"}）
+	// 为主，AUTOCLAW_PROXIES（"前缀=URL;前缀2=URL"）覆盖同名条目。匹配不到
+	// 的账号直连。
+	c.Proxies = map[string]string{}
+	loadProxiesJSON(filepath.Join(c.StateDir, "proxies.json"), c.Proxies)
+	for _, kv := range strings.Split(os.Getenv("AUTOCLAW_PROXIES"), ";") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(kv), "="); ok && strings.TrimSpace(k) != "" {
+			c.Proxies[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
 	for _, h := range strings.Split(os.Getenv("AUTOCLAW_OAUTH_EXTRA_HOSTS"), ",") {
 		if h = strings.TrimSpace(strings.ToLower(h)); h != "" {
 			c.OAuthExtraHosts = append(c.OAuthExtraHosts, h)
 		}
 	}
 	return c
+}
+
+// loadProxiesJSON 读代理映射文件（{"账号": "URL"}）；不存在/解析失败静默跳过
+// （文件是可选配置，坏了不该挡启动）。
+func loadProxiesJSON(path string, into map[string]string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	var m map[string]string
+	if json.NewDecoder(f).Decode(&m) != nil {
+		return
+	}
+	for k, v := range m {
+		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+			into[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
 }
 
 func orDefault(v, def string) string {

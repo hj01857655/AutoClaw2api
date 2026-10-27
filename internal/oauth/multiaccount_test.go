@@ -224,3 +224,59 @@ func TestSaveLoginActivates(t *testing.T) {
 		t.Fatalf("激活账号应为 b280d91248f0, got %+v", got)
 	}
 }
+
+// 批量刷新：只续临期账号、不改激活标记、激活账号同步内存缓存。
+func TestRefreshAllExpiringKeepsActive(t *testing.T) {
+	s := newMultiStore(t)
+	soon := time.Now().Add(30 * time.Minute).Unix() // 30 分钟后到期 → 临期
+	far := time.Now().Add(48 * time.Hour).Unix()
+	a := &Credential{AccessToken: "tok-a", RefreshToken: "rt-a", Account: "aaa", ExpiresAt: ptrInt64(soon)}
+	b := &Credential{AccessToken: "tok-b", RefreshToken: "rt-b", Account: "bbb", ExpiresAt: ptrInt64(far)}
+	s.SaveLogin(a)
+	// SaveLogin(b) 会把激活切到 b；手工切回 a 模拟 a 是激活账号
+	s.SaveLogin(b)
+	if err := s.SelectAccount("aaa"); err != nil {
+		t.Fatal(err)
+	}
+
+	n := s.RefreshAllExpiring(time.Hour)
+	if n != 1 {
+		t.Fatalf("应只刷新临期的 1 个账号，实际 %d", n)
+	}
+	// 激活标记没被批量刷新带走
+	active := readTrim(filepath.Join(s.dir, ActiveFile))
+	if active != "aaa" {
+		t.Fatalf("批量刷新不应改激活标记: active=%q", active)
+	}
+	// 临期账号（aaa，30 分钟后到期）已换成新 token
+	cred := s.loadFile(filepath.Join(s.dir, accountFile("aaa")))
+	if cred == nil || cred.AccessToken != "fresh-rt-a" {
+		t.Fatalf("aaa 应已刷新: %+v", cred)
+	}
+	// 未临期（bbb，48 小时后到期）的原样
+	cred = s.loadFile(filepath.Join(s.dir, accountFile("bbb")))
+	if cred == nil || cred.AccessToken != "tok-b" {
+		t.Fatalf("bbb 未临期不应动: %+v", cred)
+	}
+}
+
+// 代理表：全名与 12 位前缀都能命中，未配置直连。
+func TestProxyForMatchesPrefix(t *testing.T) {
+	s := newMultiStore(t)
+	s.SetProxies(map[string]string{
+		"569867b9a86e":     "http://127.0.0.1:7890", // 12 位前缀
+		"full-account-xyz": "socks5://p:1080",       // 全名
+	})
+	if got := s.ProxyFor("569867b9a86eabcdef99"); got != "http://127.0.0.1:7890" {
+		t.Fatalf("前缀未命中: %q", got)
+	}
+	if got := s.ProxyFor("full-account-xyz"); got != "socks5://p:1080" {
+		t.Fatalf("全名未命中: %q", got)
+	}
+	if got := s.ProxyFor("unknown"); got != "" {
+		t.Fatalf("未配置应直连: %q", got)
+	}
+	if got := s.ProxyFor(""); got != "" {
+		t.Fatalf("空账号应直连: %q", got)
+	}
+}

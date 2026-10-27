@@ -40,6 +40,10 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 
 **请求报表**：`GET /admin/api/stats`（面板「报表」页签）按模型聚合请求数 / 成功率 / token 消耗 / 平均耗时，内存态聚合（重启清零）。
 
+**每账号出网代理**：状态目录放一份 `proxies.json`（`{"账号或12位前缀": "http://127.0.0.1:7890"}`，或环境变量 `AUTOCLAW_PROXIES="前缀=URL;前缀2=URL"`），chat 上游与 token 刷新都按请求时激活账号的代理走，没配的账号直连；轮转换号后下一请求自动切新账号的代理。支持 http/socks5，改完重启生效。
+
+**临期凭据批量刷新**：每 30 分钟后台扫一遍全部落盘账号，1 小时内到期的提前用 refreshToken 续期——免得请求路径上首个撞上临期 token 的请求白等一次刷新往返。只动凭据文件，不改激活账号。
+
 ## 接口
 
 | 端点 | 说明 |
@@ -68,6 +72,7 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `AUTOCLAW_DEFAULT_MODEL` | `zai_auto` | 请求未带 model 时的兜底模型 |
 | `AUTOCLAW_AUTO_CLAIM` | 开 | 每日自动签到（`daily_signin`，幂等）：启动与日期变化时自动领取，设 `0`/`off`/`false` 关闭 |
 | `AUTOCLAW_COOLDOWN_MIN` | `10` | 多账号轮转的冷却时长（分钟）：429/持续 401 后该账号暂停使用的时长 |
+| `AUTOCLAW_PROXIES` | 空 | 每账号出网代理（`账号前缀=URL;账号2=URL`）；状态目录 `proxies.json` 同义且优先级更细 |
 | `AUTOCLAW_OAUTH_DIR` / `AUTOCLAW_OAUTH_EXTRA_HOSTS` | `<状态目录>/.cred` | oauth 凭据目录 / OAuth 回调白名单附加 host |
 | `DUMP` / `DUMP_DIR` / `DUMP_MAX_FILES` | 开 / `dumps` / 20 | 上游请求 / 响应落盘（排障用） |
 

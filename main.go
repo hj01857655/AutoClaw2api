@@ -7,8 +7,10 @@ package main
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"autoclaw2api/internal/account"
 	"autoclaw2api/internal/config"
@@ -49,6 +51,10 @@ func main() {
 		oauthStore.MarkRateLimited(oauthStore.ActiveAccount(), cfg.RotateCooldown)
 	}
 	up.AccountOK = func() { oauthStore.ClearCooldown(oauthStore.ActiveAccount()) }
+	// 每账号出网代理：chat 上游与 token 刷新都按激活账号的代理表选路
+	oauthStore.SetProxies(cfg.Proxies)
+	oauthStore.SetProxyFn(oauthStore.ActiveProxy)
+	up.ProxyFn = oauthStore.ActiveProxy
 
 	fetchModels := func() []string {
 		token, err := tokenFn()
@@ -68,6 +74,16 @@ func main() {
 	if cfg.AutoClaim {
 		go srv.StartAutoClaim() // 每日自动签到（daily_signin，幂等；AUTOCLAW_AUTO_CLAIM=0 关）
 	}
+	// 临期凭据批量刷新：每 30 分钟扫一遍全部落盘账号，1 小时内到期的提前续期。
+	// 免得请求路径上首个撞上临期 token 的请求白等一次刷新往返。
+	go func() {
+		for {
+			time.Sleep(30 * time.Minute)
+			if n := oauthStore.RefreshAllExpiring(time.Hour); n > 0 {
+				logger.Info("临期凭据批量刷新完成", slog.Int("refreshed", n))
+			}
+		}
+	}()
 
 	schemeHost := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	fmt.Printf("AutoClaw2api 启动: http://%s\n", schemeHost)
