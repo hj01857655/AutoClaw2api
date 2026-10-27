@@ -73,6 +73,13 @@ type Client struct {
 	// Invalidate 让凭据缓存失效（对应 _store.invalidate()）。
 	Invalidate func()
 
+	// 多账号轮转的触发点（main 注入 oauth.Store 的对应方法；nil = 单账号语义）：
+	//   AccountLimited 当前账号被上游限流/拒绝，凭据层把它放进冷却表，下次
+	//                  Token() 自动换备选账号；
+	//   AccountOK      请求成功，清掉当前账号的冷却。
+	AccountLimited func()
+	AccountOK      func()
+
 	// Sleep 退避等待；测试里注入 no-op，避免真等 2/4/8 秒。
 	Sleep func(time.Duration)
 }
@@ -97,6 +104,7 @@ func (c *Client) Open(rid string, payload map[string]any) (*http.Response, error
 	if err != nil {
 		return nil, err
 	}
+	retried401 := false
 	for attempt := 0; attempt < MaxAttempts; attempt++ {
 		headers, body, meta := lanes.BuildRequest(
 			payload, token, c.Version, c.Platform, c.AppID, c.AppKey)
@@ -137,18 +145,44 @@ func (c *Client) Open(rid string, payload map[string]any) (*http.Response, error
 			return nil, err
 		}
 
-		if resp.StatusCode == http.StatusUnauthorized && attempt < MaxAttempts-1 {
-			// token 可能刚被桌面端轮换，重新解一次再试（只多一次本地解密）
+		if resp.StatusCode == http.StatusOK {
+			if c.AccountOK != nil {
+				c.AccountOK() // 成功即清冷却（上游可能提前解除限流）
+			}
+			return resp, nil
+		}
+
+		// 401：第一次只重解凭据（token 可能刚被轮换）；再 401 说明账号本身
+		// 被上游拒了，进冷却换备选账号。429：限流，直接进冷却换号——在
+		// 同一账号上退避重试只会继续撞墙。最后一次尝试的 401/429 不再重试，
+		// 原样透传给 handler 归一（与既有行为一致）。
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusTooManyRequests {
+			if attempt >= MaxAttempts-1 {
+				return resp, nil
+			}
 			resp.Body.Close()
+			retried401 = retried401 || resp.StatusCode == http.StatusUnauthorized
+			marked := false
+			if c.AccountLimited != nil && (resp.StatusCode == http.StatusTooManyRequests || retried401) {
+				c.AccountLimited()
+				marked = true
+			}
 			if c.Invalidate != nil {
 				c.Invalidate()
 			}
 			if token, err = c.Token(); err != nil {
 				return nil, err
 			}
-			c.Log.Info("上游 401，重新解密凭据后重试", slog.String("rid", rid))
+			if resp.StatusCode == http.StatusTooManyRequests {
+				c.Log.Warn("上游 429，当前账号进冷却，换号重试", slog.String("rid", rid))
+			} else if marked {
+				c.Log.Warn("上游持续 401，当前账号进冷却，换号重试", slog.String("rid", rid))
+			} else {
+				c.Log.Info("上游 401，重新解密凭据后重试", slog.String("rid", rid))
+			}
 			continue
 		}
+
 		if resp.StatusCode == 200 || !TransientStatus[resp.StatusCode] {
 			return resp, nil
 		}

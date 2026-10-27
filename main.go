@@ -43,6 +43,12 @@ func main() {
 	up.CNBase = strings.TrimRight(cfg.CNUpstreamBase, "/")
 	up.CNPath = config.CNUpstreamPath
 	up.RegionFn = oauthStore.ActiveRegion
+	// 多账号轮转：429/持续 401 时把当前账号放进冷却表，Get() 下次自动换
+	// 备选落盘账号；成功清冷却。
+	up.AccountLimited = func() {
+		oauthStore.MarkRateLimited(oauthStore.ActiveAccount(), cfg.RotateCooldown)
+	}
+	up.AccountOK = func() { oauthStore.ClearCooldown(oauthStore.ActiveAccount()) }
 
 	fetchModels := func() []string {
 		token, err := tokenFn()

@@ -47,6 +47,11 @@ type Store struct {
 	mu   sync.Mutex
 	cred *Credential
 	at   time.Time
+
+	// 多账号轮转冷却表：429/持续 401 后账号进冷却，Get() 自动跳到备选。
+	// 键为完整账号名；到点自动出冷却。不落盘——重启即清零，冷却本来就是
+	// 分钟级的临时状态。
+	cooldown map[string]time.Time
 }
 
 // RefreshMarginS 提前多久触发刷新。上游 token 有效期以 JWT exp 为准，这里只是
@@ -86,6 +91,7 @@ func NewStore(directory, authBase, cnAuthBase, version, platform, appID, appKey 
 		log:           logger,
 		protect:       winapi.CryptProtectData,
 		unprotect:     winapi.CryptUnprotectData,
+		cooldown:      map[string]time.Time{},
 	}
 	s.httpRefresh = s.Client.Refresh
 	return s
@@ -396,6 +402,22 @@ func (s *Store) Get() (string, error) {
 			"尚未登录。打开 http://127.0.0.1:%d/admin 用 OAuth 授权登录", s.Port), nil, nil)
 	}
 
+	// 轮转：激活账号在冷却中且存在可用备选时，内存内切到备选（不动
+	// active-account.txt——冷却结束或重启后仍回激活账号）。全在冷却时
+	// 保留激活账号硬试：总比直接报错好，上游可能已经解除限流。
+	if s.isCooling(now, cred.Account) {
+		if alt := s.pickAvailable(now, cred.Account); alt != nil {
+			s.log.Info("当前账号冷却中，轮转到备选账号",
+				slog.String("from", first12(cred.Account)),
+				slog.String("to", first12(alt.Account)))
+			cred = alt
+			s.cred, s.at = alt, now
+		} else {
+			s.log.Warn("全部账号都在冷却中，仍用激活账号尝试",
+				slog.String("account", first12(cred.Account)))
+		}
+	}
+
 	if s.expiring(cred, now) {
 		if cred.RefreshToken == "" {
 			return "", newErr("token 已过期且没有 refreshToken，需重新授权", nil, nil)
@@ -488,6 +510,91 @@ func (s *Store) Cached() *Credential {
 func TokenFmtExp(token string) string { return FmtExp(token) }
 
 // ActiveRegion 当前激活账号的域：cn | global（无凭据回退 global，配合 .env 默认域）。
+// MarkRateLimited 把账号放进冷却表（多账号轮转的触发点，upstream 在
+// 429/持续 401 时调用）。d 是冷却时长。
+func (s *Store) MarkRateLimited(name string, d time.Duration) {
+	if name == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cooldown[name] = time.Now().Add(d)
+	s.log.Warn("账号进入冷却",
+		slog.String("account", first12(name)), slog.Duration("for", d))
+}
+
+// ClearCooldown 请求成功后清冷却（上游可能已提前解除限流）。
+func (s *Store) ClearCooldown(name string) {
+	if name == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.cooldown, name)
+}
+
+// ActiveAccount 当前生效账号名（upstream 成功回调与探针用）。
+func (s *Store) ActiveAccount() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cred == nil {
+		s.cred = s.load()
+	}
+	if s.cred == nil {
+		return ""
+	}
+	return s.cred.Account
+}
+
+// CooldownStatus 冷却中账号列表（面板展示用）。
+func (s *Store) CooldownStatus() []map[string]any {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []map[string]any{}
+	for name, until := range s.cooldown {
+		if !now.Before(until) {
+			delete(s.cooldown, name)
+			continue
+		}
+		out = append(out, map[string]any{
+			"account": first12(name),
+			"until":   until.Format("15:04:05"),
+			"left_s":  int(until.Sub(now).Seconds()),
+		})
+	}
+	return out
+}
+
+// isCooling 账号是否在冷却中（顺带清掉到期的条目）。调用方持 s.mu。
+func (s *Store) isCooling(now time.Time, name string) bool {
+	until, ok := s.cooldown[name]
+	if !ok {
+		return false
+	}
+	if !now.Before(until) {
+		delete(s.cooldown, name)
+		return false
+	}
+	return true
+}
+
+// pickAvailable 从落盘账号里挑一个不在冷却的备选（排除当前账号）。
+// 没有就返回 nil。调用方持 s.mu；loadFile 只读文件不碰锁。
+func (s *Store) pickAvailable(now time.Time, exclude string) *Credential {
+	bins, _ := filepath.Glob(filepath.Join(s.dir, "*.bin"))
+	for _, p := range bins {
+		cred := s.loadFile(p)
+		if cred == nil || cred.Account == "" || cred.Account == exclude {
+			continue
+		}
+		if !s.isCooling(now, cred.Account) {
+			return cred
+		}
+	}
+	return nil
+}
+
 func (s *Store) ActiveRegion() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

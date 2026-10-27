@@ -36,6 +36,10 @@ curl -X POST http://127.0.0.1:8378/admin/api/oauth/sms/verify -d '{"phone":"1380
 
 token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭据并重试一次。
 
+**多账号自动轮转**：上游 429（限流）或连续 401（账号被拒）时，当前账号自动进入冷却表（默认 10 分钟，`AUTOCLAW_COOLDOWN_MIN` 可调），网关立即换下一个未冷却的落盘账号重试，请求不失败；成功即清冷却。冷却表在内存里，不动激活账号的落盘状态，重启清零。面板「报表」页签可看冷却中的账号。
+
+**请求报表**：`GET /admin/api/stats`（面板「报表」页签）按模型聚合请求数 / 成功率 / token 消耗 / 平均耗时，内存态聚合（重启清零）。
+
 ## 接口
 
 | 端点 | 说明 |
@@ -47,13 +51,14 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `POST /v1/responses` | OpenAI Responses |
 | `GET /`、`/admin` | Web 管理面板（内置，开箱即用）：OAuth / 短信登录、账号切换、余额 / 积分明细、任务领取、自检与模型探测。状态目录放一份自定义 `panel.html` 可覆盖内置版 |
 
-`/admin/api/*` 面板后端：`overview` / `credits` / `ledgers` / `claim` / `tasks` / `oauth/begin|status|cancel` / `oauth/sms/send|verify`（国内版验证码登录）/ `accounts` / `accounts/select` / `accounts/delete` / `accounts/import` / `refresh-token` / `self-check` / `probe-models`。
+`/admin/api/*` 面板后端：`overview` / `credits` / `ledgers` / `claim` / `tasks` / `oauth/begin|status|cancel` / `oauth/sms/send|verify`（国内版验证码登录）/ `accounts` / `accounts/select` / `accounts/delete` / `accounts/import` / `refresh-token` / `stats`（请求报表 + 账号冷却）/ `self-check` / `probe-models`。
 
 ## 配置（环境变量 > `.env` > 默认值）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `API_KEY` | 空 | 非空 = 入口鉴权（Bearer / x-api-key） |
+| `API_KEY` | 空 | 非空 = 入口鉴权（Bearer / x-api-key），chat 三协议与 `/admin/api/*` 共用 |
+| `AUTOCLAW_ADMIN_KEY` | 空 | 非空 = `/admin/api/*` 改用这把独立钥匙——发出去的 chat Key 进不了后台，公网部署时两把钥匙必须不同；未设回退 `API_KEY` 保持旧行为 |
 | `HOST` / `PORT` | `127.0.0.1` / `8378` | 监听地址。凭据绑死本机 DPAPI，默认仅回环 |
 | `AUTOCLAW2API_STATE_DIR` | exe 所在目录 | panel.html / request.log / dumps/ / .cred/ 落点 |
 | `AUTOCLAW_APP_VERSION` / `AUTOCLAW_PLATFORM` / `AUTOCLAW_APP_KEY` | `2.1.0` / `win` / 内置值 | 客户端身份参数（对齐桌面端 2.x） |
@@ -62,6 +67,7 @@ token 过期自动用 refreshToken 续期；上游 401 时网关自动重读凭�
 | `AUTOCLAW_CN_AUTH_BASE` | `https://autoglm-api.zhipuai.cn` | 国内版账号面 base——手机验证码登录与国内号的任务/签到/钱包端点只挂国内域，独立于国际域三件套 |
 | `AUTOCLAW_DEFAULT_MODEL` | `zai_auto` | 请求未带 model 时的兜底模型 |
 | `AUTOCLAW_AUTO_CLAIM` | 开 | 每日自动签到（`daily_signin`，幂等）：启动与日期变化时自动领取，设 `0`/`off`/`false` 关闭 |
+| `AUTOCLAW_COOLDOWN_MIN` | `10` | 多账号轮转的冷却时长（分钟）：429/持续 401 后该账号暂停使用的时长 |
 | `AUTOCLAW_OAUTH_DIR` / `AUTOCLAW_OAUTH_EXTRA_HOSTS` | `<状态目录>/.cred` | oauth 凭据目录 / OAuth 回调白名单附加 host |
 | `DUMP` / `DUMP_DIR` / `DUMP_MAX_FILES` | 开 / `dumps` / 20 | 上游请求 / 响应落盘（排障用） |
 

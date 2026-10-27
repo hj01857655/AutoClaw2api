@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // 上游常量（对应 lanes/autoclaw.py 顶部，全部来自 main.cjs 实证，非猜测）。
@@ -51,7 +52,9 @@ type Config struct {
 	AuthBase         string // oauth 端点 base
 	CNAuthBase       string // 国内版账号面 base（验证码登录）
 	OAuthExtraHosts  []string
-	AutoClaim        bool // 每日自动签到（daily_signin，默认开）
+	AutoClaim        bool          // 每日自动签到（daily_signin，默认开）
+	AdminKey         string        // /admin/api 独立钥匙（未设回退 API_KEY）
+	RotateCooldown   time.Duration // 429/持续 401 后账号冷却时长（默认 10m）
 }
 
 // StateFilePath 返回状态目录下的文件路径。
@@ -127,6 +130,15 @@ func Load() *Config {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("AUTOCLAW_AUTO_CLAIM"))) {
 	case "0", "off", "false":
 		c.AutoClaim = false
+	}
+	// admin 钥匙与网关 Key 分离：发出去的 chat Key 进不了后台（公网部署面）。
+	// 未设时回退 API_KEY，保持旧行为。
+	c.AdminKey = strings.TrimSpace(os.Getenv("AUTOCLAW_ADMIN_KEY"))
+	c.RotateCooldown = 10 * time.Minute
+	if v := strings.TrimSpace(os.Getenv("AUTOCLAW_COOLDOWN_MIN")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.RotateCooldown = time.Duration(n) * time.Minute
+		}
 	}
 	for _, h := range strings.Split(os.Getenv("AUTOCLAW_OAUTH_EXTRA_HOSTS"), ",") {
 		if h = strings.TrimSpace(strings.ToLower(h)); h != "" {

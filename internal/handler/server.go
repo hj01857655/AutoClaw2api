@@ -58,6 +58,12 @@ type Server struct {
 
 	// 自动签到状态：当天已处理就不再调（只在 autoClaim goroutine 读写）
 	lastClaimDay string
+
+	// 请求统计（stats.go）：按模型聚合，内存态
+	statsMu     sync.Mutex
+	stats       map[string]*statAgg
+	statsSince  time.Time
+	tokensTotal int64
 }
 
 // New 构造调度层。fetchModels 注入 lanes.FetchModels（测试注入假上游）。
@@ -165,6 +171,10 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			s.cors(rec)
 		}
 
+		// 统计埋点：流式/非流式都要计入（rec.body 有累积，done: 口径前 1MB）
+		if !logQuietPaths[r.URL.Path] && strings.HasPrefix(r.URL.Path, "/v1/") {
+			s.recordStat(str(payload["model"]), rec.status, time.Since(t0), rec.body.String())
+		}
 		if logQuietPaths[r.URL.Path] || rec.streamed {
 			return
 		}
@@ -177,11 +187,18 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 	})
 }
 
+// authorized 入口鉴权：/admin/api/* 用独立 AdminKey（未设回退 API_KEY——
+// 发出去的 chat Key 进不了后台，公网部署时两把钥匙必须不同）；其余路径
+// （chat 三协议）用 API_KEY。都未设 = 仅回环免鉴权。
 func (s *Server) authorized(r *http.Request) bool {
-	if s.Cfg.APIKey == "" {
+	want := s.Cfg.APIKey
+	if strings.HasPrefix(r.URL.Path, "/admin/api") && s.Cfg.AdminKey != "" {
+		want = s.Cfg.AdminKey
+	}
+	if want == "" {
 		return true
 	}
-	return r.Header.Get("Authorization") == "Bearer "+s.Cfg.APIKey
+	return r.Header.Get("Authorization") == "Bearer "+want
 }
 
 func (s *Server) cors(w http.ResponseWriter) {
@@ -240,6 +257,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin/api/accounts/delete", s.adminAccountDelete)
 	mux.HandleFunc("/admin/api/accounts/import", s.adminAccountImport)
 	mux.HandleFunc("/admin/api/refresh-token", s.adminRefreshToken)
+	mux.HandleFunc("/admin/api/stats", s.adminStats)
 	mux.HandleFunc("/admin/api/self-check", s.adminSelfCheck)
 	mux.HandleFunc("/admin/api/probe-models", s.adminProbeModels)
 	return s.middleware(mux)

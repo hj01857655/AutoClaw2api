@@ -58,7 +58,7 @@ const POST=(p,body)=>api(p,{method:"POST",body:JSON.stringify(body||{})});
 function esc(s){const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML}
 function fmtAmt(a){return (a>0?"+":"")+a}
 
-let TABS=["概览","登录","账号","任务","流水","诊断"],cur="概览";
+let TABS=["概览","登录","账号","任务","流水","报表","诊断"],cur="概览";
 function renderTabs(){$("#tabs").innerHTML=TABS.map(t=>`<button class="${t===cur?"on":""}" onclick="go('${t}')">${t}</button>`).join("")}
 function go(t){cur=t;renderTabs();views[t]().then(h=>$("#view").innerHTML=h)}
 const V={};const views={};
@@ -152,6 +152,24 @@ defView("流水",async()=>{const r=await api("ledgers?page="+ledPage+"&page_size
   <table><tr><th>时间</th><th>变动</th><th>说明</th><th>模型</th></tr>${rows}</table>
   <div class="row" style="margin-top:10px"><button class="ghost" onclick="ledPage=Math.max(1,ledPage-1);go('流水')">上一页</button>
   <button class="ghost" onclick="ledPage++;go('流水')">下一页</button></div></div>`});
+
+/* ── 报表 ── */
+defView("报表",async()=>{
+  const r=await api("stats");if(!r.ok)return `<div class="bad">${esc(r.message)}</div>`;
+  const s=r.stats||{};
+  const pct=(o)=>o.requests?Math.round(100*o.ok/o.requests)+"%":"—";
+  const ms=(o)=>o.requests?Math.round(o.avg_ms)+"ms":"—";
+  const rows=(s.models||[]).map(m=>`<tr><td class="mono">${esc(m.model)}</td>
+    <td>${m.requests}</td><td class="pos">${m.ok}</td><td class="${m.fail?"bad":"dim"}">${m.fail}</td>
+    <td>${pct(m)}</td><td class="mono">${m.tokens.toLocaleString()}</td><td>${ms(m)}</td></tr>`).join("");
+  const cd=(s.cooldown||[]).map(c=>`<tr><td class="mono">${esc(c.account)}</td>
+    <td class="warn">${esc(c.until)}</td><td>${c.left_s}s</td></tr>`).join("");
+  return `<div class="card"><h3>请求报表 <span class="dim">自 ${esc(s.since||"—")}（内存态，重启清零）</span></h3>
+  <table><tr><th>模型</th><th>请求</th><th>成功</th><th>失败</th><th>成功率</th><th>tokens</th><th>平均耗时</th></tr>
+  ${s.total?`<tr style="border-top:2px solid var(--line)"><td><b>${esc(s.total.model)}</b></td><td>${s.total.requests}</td><td class="pos">${s.total.ok}</td><td class="${s.total.fail?"bad":"dim"}">${s.total.fail}</td><td>${pct(s.total)}</td><td class="mono">${s.total.tokens.toLocaleString()}</td><td>${ms(s.total)}</td></tr>`:""}
+  ${rows||'<tr><td colspan="7" class="dim">还没有 /v1/ 请求</td></tr>'}</table></div>
+  <div class="card"><h3>账号冷却（429/持续 401 自动换号）</h3>
+  <table><tr><th>账号</th><th>冷却至</th><th>剩余</th></tr>${cd||'<tr><td colspan="3" class="dim">无冷却中的账号</td></tr>'}</table></div>`});
 
 /* ── 诊断 ── */
 defView("诊断",Promise.resolve().then(()=>`
