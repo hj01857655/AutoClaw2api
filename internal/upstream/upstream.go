@@ -173,12 +173,15 @@ func (c *Client) Open(rid string, payload map[string]any) (*http.Response, error
 				return resp, nil
 			}
 			resp.Body.Close()
-			retried401 = retried401 || resp.StatusCode == http.StatusUnauthorized
+			was401 := resp.StatusCode == http.StatusUnauthorized
 			marked := false
-			if c.AccountLimited != nil && (resp.StatusCode == http.StatusTooManyRequests || retried401) {
+			// 429 直接标记；401 只有「之前已经 401 过」才算账号被拒——首次
+			// 401 多半是 token 刚被轮换，重解凭据即可，不该进冷却。
+			if c.AccountLimited != nil && (!was401 || retried401) {
 				c.AccountLimited()
 				marked = true
 			}
+			retried401 = retried401 || was401
 			if c.Invalidate != nil {
 				c.Invalidate()
 			}
